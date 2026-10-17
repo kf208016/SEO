@@ -19,6 +19,7 @@ export const COPY = {
     summary: '本工具請求一個隨機產生、應該不存在的網址，伺服器回應 200（成功）。如果這個網址確實不存在，伺服器應該回應 404 或 410，否則搜尋引擎可能把錯誤頁當成一般網頁。',
   },
   T16: { fixEnd: '如果是刻意設定（例如內容聯播），可以忽略這一項。' },
+  T19: { title: 'robots.txt 宣告的 sitemap 有問題' },
   T18: {
     title: '沒有在常見位置找到 sitemap',
     summary: '沒有在 robots.txt 宣告的位置或 /sitemap.xml 找到 sitemap。小型網站只要內部連結完整，沒有 sitemap 也能被找到；網頁多或經常更新時建議提供。本項不計分。',

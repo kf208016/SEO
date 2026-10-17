@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DOMParser } from 'linkedom';
-import { decodeBody, extractPage, fnv1a, normText, PARSE_LIMITS } from '../public/core/parse.js';
+import { Worker } from 'node:worker_threads';
+import { decodeBody, extractPage, fnv1a, normText, PARSE_LIMITS, stripInlineStyles } from '../public/core/parse.js';
 import { parseSitemap, looksLikeHtml } from '../public/core/sitemap.js';
 
 const enc = new TextEncoder();
@@ -299,4 +300,157 @@ test('extractPage: images capped at 1,000 with limitsHit "images"; JSON-LD block
   const q = extract(`<!doctype html><html><head><script type="application/ld+json">${huge}</script></head></html>`);
   assert.equal(q.jsonld[0].ok, false);
   assert.equal(q.jsonld[0].error, 'too_large');
+});
+
+// ------------------------------------------------------------------ v1.6 B1: stripInlineStyles
+function attrsOf(el) {
+  const names = typeof el.getAttributeNames === 'function' ? [...el.getAttributeNames()] : [...el.attributes].map((a) => a.name);
+  const o = {};
+  for (const n of names) if (n.toLowerCase() !== 'style') o[n.toLowerCase()] = el.getAttribute(n);
+  return o;
+}
+function bodyElements(fragment) {
+  const d = doc(`<!doctype html><html><body>${fragment}</body></html>`);
+  return { d, els: [...d.body.querySelectorAll('*')] };
+}
+const hasStyleAttrInTag = (s) => /<[a-zA-Z][^>]*\sstyle\s*=/i.test(s);
+
+test('B1 stripInlineStyles removes <style> blocks: any case, with attributes, multi-line, several, non-greedy', () => {
+  assert.equal(stripInlineStyles('<head><style>a{}</style></head>'), '<head></head>');
+  const multi = '<p>1</p><STYLE media="x">\n.a { color: red }\n.b > p {}\n</STYLE><p>2</p><style type="text/css">b{}</Style><p>3</p>';
+  const out = stripInlineStyles(multi);
+  assert.equal(out, '<p>1</p><p>2</p><p>3</p>');
+  assert.equal(stripInlineStyles('<style>a</style><p>keep</p><style>b</style>'), '<p>keep</p>');
+});
+
+test('B1 stripInlineStyles removes an unterminated <style> to the end of the document', () => {
+  assert.equal(stripInlineStyles('<p>a</p><style>body{}\n.x{}\n<p>never closed'), '<p>a</p>');
+});
+
+test('B1 stripInlineStyles removes style attributes (double, single, unquoted, upper-case; first/middle/last)', () => {
+  const cases = [
+    ['<div style="color:red" class="a b">x</div>', ['class="a b"']],
+    ["<div class=\"a\" style='color: red; margin: 0' id=\"b\">x</div>", ['class="a"', 'id="b"']],
+    ['<div class="a" style=color:red>x</div>', ['class="a"']],
+    ['<div id="z" STYLE="x" data-k="v">x</div>', ['id="z"', 'data-k="v"']],
+    ['<img src="/a.png" alt="a" style="width:1px" />', ['src="/a.png"', 'alt="a"']],
+    ['<a href="/p?q=1&amp;r=2" style="c:d" data-foo="bar">x</a>', ['href="/p?q=1&amp;r=2"', 'data-foo="bar"']],
+    ['<p class="a" style="x" id="b" style2="keep">y</p>', ['class="a"', 'id="b"', 'style2="keep"']],
+  ];
+  for (const [input, kept] of cases) {
+    const out = stripInlineStyles(input);
+    assert.ok(!hasStyleAttrInTag(out), 'style attribute removed: ' + out);
+    for (const k of kept) assert.ok(out.includes(k), `"${k}" kept byte-identical in: ${out}`);
+    const a = bodyElements(input);
+    const b = bodyElements(out);
+    assert.equal(b.els.length, a.els.length, input);
+    a.els.forEach((el, i) => {
+      assert.equal(b.els[i].tagName, el.tagName, input);
+      assert.deepEqual(attrsOf(b.els[i]), attrsOf(el), input);
+    });
+    assert.equal(b.d.body.textContent, a.d.body.textContent, input);
+  }
+});
+
+test('B1 stripInlineStyles leaves text outside tags alone (e.g. "style=x" in body text)', () => {
+  assert.equal(stripInlineStyles('<p>use style=x here</p>'), '<p>use style=x here</p>');
+  assert.equal(stripInlineStyles('<p>the style="a" attribute</p>'), '<p>the style="a" attribute</p>');
+  assert.equal(stripInlineStyles('<p class="c">style: none</p>'), '<p class="c">style: none</p>');
+});
+
+test('B1 stripInlineStyles keeps attributes merely containing "style" (data-style) and leaves style-free HTML byte-identical', () => {
+  const out = stripInlineStyles('<div data-style="keep" style="drop">x</div>');
+  assert.ok(out.includes('data-style="keep"'), out);
+  assert.ok(!out.includes('drop'), out);
+  const clean = '<!doctype html>\n<html lang="zh-TW"><head><title>t</title><link rel="stylesheet" href="/s.css"></head>\n<body class="x" data-a=\'1\'><p id=p1>文字 &amp; 內容</p><img src="a.png" alt=""></body></html>';
+  assert.equal(stripInlineStyles(clean), clean);
+});
+
+test('B1 extractPage results are unchanged by stripping (text, hash, h1, links, canonicals, jsonld)', () => {
+  const styled =
+    '<!doctype html><html><head><title>標題</title><style>p{color:red}</style><link rel="canonical" href="/c">' +
+    '<script type="application/ld+json">{"@type":"Thing"}</script></head>' +
+    '<body style="margin:0"><h1 style=\'x\'>主標題</h1><p style=a>正文 style=x</p><a href="/l" style="c">連結</a></body></html>';
+  const a = extract(styled);
+  const b = extract(stripInlineStyles(styled));
+  for (const f of ['title', 'h1', 'textLength', 'textHash', 'links', 'canonicals', 'jsonld']) assert.deepEqual(b[f], a[f], f);
+});
+
+// ------------------------------------------------------------------ v1.6 B4: stripInlineStyles must be linear time
+// stripInlineStyles is synchronous, so a quadratic implementation would block this process for minutes.
+// Each case therefore runs in a worker thread that is terminated after HARD_LIMIT_MS; the spec limit
+// (< 1 s, measured with performance.now() around the call inside the worker) is asserted separately.
+const PARSE_URL = new URL('../public/core/parse.js', import.meta.url).href;
+const HARD_LIMIT_MS = 10000;
+
+function runIsolated(buildExpr, checkExpr) {
+  const code = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    import(workerData.url).then(({ stripInlineStyles }) => {
+      const input = ${buildExpr};
+      const t0 = performance.now();
+      const out = stripInlineStyles(input);
+      const ms = performance.now() - t0;
+      let ok;
+      try { ok = (${checkExpr}); } catch (e) { ok = 'check threw: ' + e.message; }
+      parentPort.postMessage({ ms, ok, inLength: input.length, outLength: typeof out === 'string' ? out.length : -1 });
+    }, (e) => parentPort.postMessage({ error: String((e && e.stack) || e) }));
+  `;
+  return new Promise((resolve) => {
+    const w = new Worker(code, { eval: true, workerData: { url: PARSE_URL } });
+    const timer = setTimeout(() => {
+      w.terminate();
+      resolve({ timeout: true });
+    }, HARD_LIMIT_MS);
+    w.once('message', (m) => {
+      clearTimeout(timer);
+      w.terminate();
+      resolve(m);
+    });
+    w.once('error', (e) => {
+      clearTimeout(timer);
+      resolve({ error: String(e) });
+    });
+  });
+}
+
+async function assertLinear(buildExpr, checkExpr, what) {
+  const r = await runIsolated(buildExpr, checkExpr);
+  assert.ok(!r.timeout, `did not finish within ${HARD_LIMIT_MS} ms (not linear)`);
+  assert.ok(!r.error, r.error);
+  assert.ok(r.ms < 1000, `took ${r.ms.toFixed(0)} ms (limit 1000 ms)`);
+  assert.equal(r.ok, true, `${what} (input ${r.inLength} chars, output ${r.outLength} chars)`);
+}
+
+test('B4 2 MB of "<style" with no ">" anywhere: unterminated start tag kept as is, within 1 s', async () => {
+  await assertLinear(`'<style'.repeat(340000)`, `out === input`, 'output must equal input');
+});
+
+test('B4 "<style>" + 2 MB of "</style" without ">": unterminated style element removed to the end, within 1 s', async () => {
+  await assertLinear(`'<style>' + '</style '.repeat(250000)`, `out === ''`, 'output must be empty');
+});
+
+test('B4 2 MB of "<a \'" (quotes, no ">"): unterminated tag kept as is, within 1 s', async () => {
+  await assertLinear(`"<a '".repeat(500000)`, `out === input`, 'output must equal input');
+});
+
+test('B4 2 MB of "<" only (no tag starts): unchanged, within 1 s', async () => {
+  await assertLinear(`'<'.repeat(2000000)`, `out === input`, 'output must equal input');
+});
+
+test('B4 2 MB of \'<p style="\' (tag never closed): kept as is, style not removed, within 1 s', async () => {
+  await assertLinear(`'<p style="'.repeat(200000)`, `out === input`, 'output must equal input');
+});
+
+test('B4 sanity: a normal ~2 MB page full of inline styles is stripped within 1 s', async () => {
+  const build = `'<!doctype html><html><head><title>t</title></head><body>' + '<p style="color:red">text</p><style>.a{color:blue}</style>'.repeat(36000) + '</body></html>'`;
+  const check = [
+    `input.length > 2000000`,
+    `!/style\\s*=/i.test(out)`,
+    `!/<style/i.test(out)`,
+    `out.split('text</p>').length - 1 === 36000`,
+    `out.startsWith('<!doctype html><html><head><title>t</title></head><body>')`,
+    `out.endsWith('</body></html>')`,
+  ].join(' && ');
+  await assertLinear(build, check, 'no style left, all 36,000 paragraphs and the document frame kept');
 });

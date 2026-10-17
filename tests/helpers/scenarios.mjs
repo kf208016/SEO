@@ -334,10 +334,51 @@ export function fallbackSitemapGone(status = 404) {
 }
 export const fallbackSitemap410 = () => fallbackSitemapGone(410);
 
-// A9: a DECLARED sitemap returning 404 -> kind error (only the fallback becomes missing)
-export function declaredSitemap404() {
-  const routes = goodSiteRoutes({ robots: 'User-agent: *\nDisallow:\n\nSitemap: https://a.com/sm.xml\n', sitemap: false });
-  routes['https://a.com/sm.xml'] = { status: 404, html: '<html><body>Not Found</body></html>' };
+// B2 (v1.6): a sitemap DECLARED in robots.txt returning 404/410 -> kind missing -> T19
+export function declaredSitemapGone(status = 404, path = '/sm.xml') {
+  const url = 'https://a.com' + path;
+  const routes = goodSiteRoutes({ robots: `User-agent: *\nDisallow:\n\nSitemap: ${url}\n`, sitemap: false });
+  routes[url] = { status, html: '<html><body>Not Found</body></html>' };
+  return { site: createFakeSite({ routes }), start: START, sitemapUrl: url };
+}
+export const declaredSitemap404 = () => declaredSitemapGone(404, '/sm.xml');
+export const declaredSitemapXml404 = () => declaredSitemapGone(404, '/sitemap.xml');
+export const declaredSitemapXml410 = () => declaredSitemapGone(410, '/sitemap.xml');
+
+// B1 (v1.6): the same small site with inline styles everywhere / without any
+function stylePage(url, name, links, styled) {
+  const a = (css) => (styled ? ` style="${css}"` : '');
+  const blk = (css) => (styled ? `<style>${css}</style>` : '');
+  return [
+    `<!doctype html><html lang="zh-Hant-TW"${a('background:#fff')}><head><meta charset="utf-8">`,
+    `<title>金水範例公司｜${name}</title>`,
+    blk('body { margin: 0 }'),
+    `<meta name="description" content="金水範例公司的${name}頁面說明。">`,
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<link rel="canonical" href="${url}">`,
+    `<meta property="og:title" content="${name}"><meta property="og:image" content="https://a.com/og.png">`,
+    styled ? '<STYLE media="screen">\n.a { color: red; }\n.b > p { margin: 0 }\n</STYLE>' : '',
+    '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"金水範例公司"}</script>',
+    `</head><body${styled ? " STYLE='color:#333'" : ''}>`,
+    `<h1${a('font-size: 2em')} class="title">${name}</h1>`,
+    `<p${styled ? ' style=margin:0' : ''} id="intro" data-x="1">這是一段用來測試網站健檢工具的正文內容，說明公司的產品、服務與聯絡方式，讓讀者可以清楚了解。這是一段用來測試網站健檢工具的正文內容，說明公司的產品與服務。use style=x here</p>`,
+    ...links.map((l) => `<a href="${l}"${a('color: blue')} data-track="nav">連結 ${l}</a>`),
+    `<img src="/img/a.png" alt="示意圖"${a('width:10px')}>`,
+    blk('.c { display: none }'),
+    '</body></html>',
+  ].join('\n');
+}
+export function styledSite(styled) {
+  const paths = ['/', '/about', '/contact'];
+  const names = { '/': '首頁內容', '/about': '關於我們', '/contact': '聯絡我們' };
+  const routes = {
+    'https://a.com/robots.txt': { text: ALLOW_WITH_SITEMAP },
+    'https://a.com/sitemap.xml': { xml: sitemapXml(paths.map((p) => 'https://a.com' + p)) },
+  };
+  for (const p of paths) {
+    const url = 'https://a.com' + p;
+    routes[url] = { html: stylePage(url, names[p], p === '/' ? ['/about', '/contact'] : ['/'], styled) };
+  }
   return { site: createFakeSite({ routes }), start: START };
 }
 
@@ -442,4 +483,8 @@ export const ALL_SCENARIOS = {
   spaRoot50: () => spaRootText(50),
   spaRoot19: () => spaRootText(19),
   finalOriginRobotsUnknown,
+  declaredSitemapXml404,
+  declaredSitemapXml410,
+  styledOn: () => styledSite(true),
+  styledOff: () => styledSite(false),
 };

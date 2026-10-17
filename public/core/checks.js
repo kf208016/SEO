@@ -19,7 +19,7 @@ const GENERIC = Object.freeze({
   T15: ['同一頁有多個 canonical', '頁面宣告了多個不同的 canonical 網址。'],
   T16: ['canonical 指向其他網站', '頁面的 canonical 指向不同網域。'],
   T17: ['canonical 指向異常頁面', 'canonical 指向本次檢查中不可正常收錄的頁面。'],
-  T19: ['sitemap 格式無法使用', 'robots.txt 宣告的 sitemap 不是有效的 sitemap。'],
+  T19: ['robots.txt 宣告的 sitemap 有問題', 'robots.txt 宣告的 sitemap 不是有效的 sitemap。'],
   T20: ['sitemap 包含異常網址', 'sitemap 中部分已抽查網址不適合收錄（僅限本次已抓的樣本）。'],
   T21: ['sitemap 含其他網站網址', 'sitemap 中出現非本站網址，未進一步讀取。'],
   T23: ['缺少行動裝置 viewport', '頁面沒有 viewport 設定。'],
@@ -244,10 +244,10 @@ export function runChecks(snapshot) {
 
   const sitemaps = snapshot.sitemaps || [];
   const declaredMaps = sitemaps.filter(s=>s.fallback===false);
-  const fallbackConclusive = sitemaps.filter(s=>s.fallback===true && !s.error && !s.accessBlocked && !s.truncated && (s.kind==='missing'||(s.status===200&&['html','invalid'].includes(s.kind))));
+  const fallbackConclusive = sitemaps.filter(s=>s.fallback===true && !s.error && !s.accessBlocked && (s.kind==='missing'||(!s.truncated&&s.status===200&&['html','invalid'].includes(s.kind))));
   if (!declaredMaps.length && fallbackConclusive.length) add('T18','sitemap_missing','tech','INFO','verified',fallbackConclusive.map(s=>s.url),{},fallbackConclusive.length,FIXED.T18);
-  const invalidMaps = declaredMaps.filter(s=>['invalid','html'].includes(s.kind));
-  if (invalidMaps.length) add('T19','sitemap_invalid','tech','P2','verified',invalidMaps.map(s=>s.url),{},invalidMaps.length);
+  const invalidMaps = declaredMaps.filter(s=>['invalid','html','missing'].includes(s.kind));
+  if (invalidMaps.length) add('T19','sitemap_invalid','tech','P2','verified',invalidMaps.map(s=>s.url),{sitemaps:invalidMaps.map(s=>({url:s.url,kind:s.kind}))},invalidMaps.length);
   const badMapUrls = unique((snapshot.sitemapUrls || []).map((url) => cleanUrl(url))).filter((url) => {
     const target = lookupTarget(url);
     if (target?.issue || robotsBlocks(snapshot, 'googlebot', url)) return true;
@@ -258,7 +258,7 @@ export function runChecks(snapshot) {
   if (badMapUrls.length) add('T20','sitemap_bad_urls','tech','P2','verified',badMapUrls);
   const foreign = (snapshot.sitemapUrls||[]).filter(u=>{try{return stripWww(new URL(u).hostname)!==snapshot.siteHost}catch{return false}});
   if (foreign.length) add('T21','sitemap_foreign_host','tech','P3','unverifiable',foreign,{},foreign.length);
-  const unverifiableMaps=sitemaps.filter(s=>['gzip','error','robots_disallowed'].includes(s.kind)||s.truncated||s.accessBlocked);
+  const unverifiableMaps=sitemaps.filter(s=>s.kind!=='missing'&&(['gzip','error','robots_disallowed'].includes(s.kind)||s.truncated||s.accessBlocked));
   if (unverifiableMaps.length) add('T37','sitemap_unverifiable','tech','INFO','unverifiable',unverifiableMaps.map(s=>s.url),{},unverifiableMaps.length);
 
   const noViewport=indexablePages.filter(p=>!p.page.hasViewport); if(noViewport.length)add('T23','viewport_missing','tech','P2','verified',noViewport.map(pageUrl));

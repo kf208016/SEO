@@ -2,7 +2,7 @@
 // fake fetchFn (tests/helpers/fakesite.mjs) -> runAudit -> runChecks -> computeScore -> botAccess
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runPipeline, allStrings } from './helpers/pipeline.mjs';
+import { runPipeline, allStrings, parseHtml } from './helpers/pipeline.mjs';
 import * as S from './helpers/scenarios.mjs';
 import { SOURCES } from '../public/core/sources.js';
 import { BOTS } from '../public/core/bots.js';
@@ -557,23 +557,72 @@ test('A9 fallback /sitemap.xml 404 or 410 -> kind missing -> T18, no T37, no sit
     assert.equal(sm.fallback, true);
     assert.ok(has(r, 'T18'));
     assert.equal(r.byId.T18.count, 1);
+    assert.ok(!has(r, 'T19'), 'an undeclared fallback never gives T19');
     assert.ok(!has(r, 'T37'));
     assert.ok(!r.snapshot.coverage.reasons.includes('sitemap_unverifiable'));
     assert.equal(r.snapshot.coverage.status, 'complete');
   }
 });
 
-test('A9 a declared sitemap returning 404 -> kind error -> T37 (no T18, no T19)', async () => {
-  const r = await go(S.declaredSitemap404);
-  const sm = r.snapshot.sitemaps.find((x) => x.url === 'https://a.com/sm.xml');
-  assert.ok(sm);
-  assert.equal(sm.fallback, false);
-  assert.equal(sm.kind, 'error');
-  assert.ok(has(r, 'T37'));
-  assert.ok(!has(r, 'T18'));
-  assert.ok(!has(r, 'T19'));
-  assert.ok(r.snapshot.coverage.reasons.includes('sitemap_unverifiable'));
-  assert.ok(!r.site.requested('https://a.com/sitemap.xml'), 'no fallback when a sitemap is declared');
+// v1.6 B2 replaces the v1.5 expectation (declared 404 -> kind error -> T37)
+test('B2 a sitemap declared in robots.txt returning 404 or 410 -> kind missing -> T19 (P2), no T37, no T18, no sitemap defect', async () => {
+  for (const b of [S.declaredSitemap404, S.declaredSitemapXml404, S.declaredSitemapXml410]) {
+    const sc = b();
+    const r = await runPipeline(sc.site, sc.start).then((x) => ({ ...x, site: sc.site }));
+    const label = sc.sitemapUrl + ' ' + b.name;
+    const sm = r.snapshot.sitemaps.find((x) => x.url === sc.sitemapUrl);
+    assert.ok(sm, label);
+    assert.equal(sm.fallback, false, label);
+    assert.equal(sm.kind, 'missing', label);
+    assert.ok(has(r, 'T19'), label);
+    const t19 = r.byId.T19;
+    assert.equal(t19.severity, 'P2');
+    assert.equal(t19.title, 'robots.txt 宣告的 sitemap 有問題');
+    assert.equal(t19.count, 1);
+    assert.ok(t19.data && Array.isArray(t19.data.sitemaps), label + ' data.sitemaps');
+    assert.ok(t19.data.sitemaps.some((x) => x.url === sc.sitemapUrl && x.kind === 'missing'), label + ' data.sitemaps entry');
+    assert.ok(!has(r, 'T37'), label);
+    assert.ok(!has(r, 'T18'), label);
+    assert.ok(!r.snapshot.coverage.reasons.includes('sitemap_unverifiable'), label);
+    assert.equal(r.site.indexOf(sc.sitemapUrl, 'sitemap') >= 0, true, label + ' requested as kind sitemap');
+    assert.equal(r.site.urls('sitemap').length, 1, label + ': no separate fallback request when a sitemap is declared');
+  }
+});
+
+// ------------------------------------------------------------------ v1.6 B1: inline styles stripped before parseHtml
+const PAGEINFO_FIELDS = ['title', 'links', 'textLength', 'textHash', 'h1', 'canonicals', 'jsonld'];
+
+test('B1 a site with inline styles everywhere yields the same PageInfo fields as the same site without styles', async () => {
+  const on = await go(S.ALL_SCENARIOS.styledOn);
+  const off = await go(S.ALL_SCENARIOS.styledOff);
+  assert.equal(on.snapshot.pages.length, 3);
+  assert.equal(off.snapshot.pages.length, 3);
+  for (let i = 0; i < 3; i++) {
+    const a = on.snapshot.pages[i];
+    const b = off.snapshot.pages[i];
+    assert.equal(a.url, b.url);
+    assert.ok(a.page && b.page, 'both analyzable: ' + a.url);
+    for (const f of PAGEINFO_FIELDS) assert.deepEqual(a.page[f], b.page[f], `${a.url} ${f}`);
+  }
+  assert.deepEqual(on.ids, off.ids);
+});
+
+test('B1 parseHtml passed to runAudit never receives <style> elements or style attributes in start tags', async () => {
+  const seen = [];
+  const spy = (text) => {
+    seen.push(String(text));
+    return parseHtml(text);
+  };
+  const sc = S.ALL_SCENARIOS.styledOn();
+  const r = await runPipeline(sc.site, sc.start, { parseHtml: spy });
+  assert.equal(r.snapshot.pages.length, 3);
+  assert.ok(seen.length >= 3, 'parseHtml called for each crawled page');
+  for (const t of seen) {
+    assert.ok(!/<style/i.test(t), 'no <style in: ' + t.slice(0, 200));
+    assert.ok(!/<[a-zA-Z][^>]*\sstyle\s*=/i.test(t), 'no style attribute in a start tag');
+    assert.ok(t.includes('use style=x here'), 'text outside tags is untouched');
+    assert.ok(t.includes('class="title"') && t.includes('id="intro" data-x="1"') && t.includes('data-track="nav"'), 'other attributes kept');
+  }
 });
 
 test('A10 home not analyzable -> no sitemap, page or probe request after the home request', async () => {

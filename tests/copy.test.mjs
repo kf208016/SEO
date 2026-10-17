@@ -100,3 +100,8 @@ test('G07 copy', async () => {
   const r = await go(S.noOrgSchema);
   assert.equal(r.byId.G07.summary, COPY.G07.summary);
 });
+
+test('T19 copy (v1.6): title for a declared sitemap that is missing', async () => {
+  const r = await go(S.declaredSitemap404);
+  assert.equal(r.byId.T19.title, COPY.T19.title);
+});

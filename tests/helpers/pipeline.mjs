@@ -13,10 +13,10 @@ export function parseHtml(text) {
   return new DOMParser().parseFromString(String(text), 'text/html');
 }
 
-export async function runPipeline(site, startUrl, { maxPages = 15, timeBudgetMs = 90000 } = {}) {
+export async function runPipeline(site, startUrl, { maxPages = 15, timeBudgetMs = 90000, parseHtml: parse = parseHtml } = {}) {
   const snapshot = await runAudit(startUrl, {
     fetchFn: site.fetchFn,
-    parseHtml,
+    parseHtml: parse,
     maxPages,
     delayMs: 0,
     timeBudgetMs,

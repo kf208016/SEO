@@ -13,6 +13,173 @@ export const PARSE_LIMITS = Object.freeze({
 const UTF8 = new TextEncoder();
 const SKIP_TEXT = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS', 'OBJECT']);
 const SPA_IDS = ['root', 'app', '__next', '__nuxt', 'svelte', '___gatsby'];
+const RAW_TEXT_TAGS = new Set(['script', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes']);
+
+function isHtmlSpace(char) {
+  return char === ' ' || char === '\t' || char === '\n' || char === '\f' || char === '\r';
+}
+
+function isAsciiLetter(char) {
+  const code = char?.charCodeAt(0) ?? 0;
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function tagEnd(source, start) {
+  let quote = null;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '>') {
+      return index + 1;
+    }
+  }
+  return -1;
+}
+
+function startTag(source, start) {
+  if (source[start] !== '<' || !isAsciiLetter(source[start + 1])) return null;
+  const end = tagEnd(source, start);
+  if (end < 0) return { end: -1 };
+
+  let nameEnd = start + 2;
+  while (nameEnd < end) {
+    const char = source[nameEnd];
+    if (isHtmlSpace(char) || char === '/' || char === '>') break;
+    nameEnd += 1;
+  }
+  return {
+    end,
+    name: source.slice(start + 1, nameEnd).toLowerCase(),
+    nameEnd,
+  };
+}
+
+function closingTagEnd(source, start, name) {
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] !== '<' || source[index + 1] !== '/') continue;
+    const nameStart = index + 2;
+    const nameEnd = nameStart + name.length;
+    if (source.slice(nameStart, nameEnd).toLowerCase() !== name) continue;
+    const boundary = source[nameEnd];
+    if (!(isHtmlSpace(boundary) || boundary === '/' || boundary === '>')) continue;
+    return tagEnd(source, index);
+  }
+  return -1;
+}
+
+function withoutStyleAttributes(tag, nameEnd) {
+  const chunks = [tag.slice(0, nameEnd)];
+  let index = nameEnd;
+  while (index < tag.length) {
+    const whitespaceStart = index;
+    while (isHtmlSpace(tag[index])) index += 1;
+    if (index >= tag.length || tag[index] === '>' || tag[index] === '/') {
+      chunks.push(tag.slice(whitespaceStart));
+      break;
+    }
+
+    const attributeStart = index;
+    while (index < tag.length) {
+      const char = tag[index];
+      if (isHtmlSpace(char) || char === '=' || char === '/' || char === '>') break;
+      index += 1;
+    }
+    if (index === attributeStart) {
+      chunks.push(tag.slice(whitespaceStart, index + 1));
+      index += 1;
+      continue;
+    }
+
+    const attributeName = tag.slice(attributeStart, index).toLowerCase();
+    const nameValueEnd = index;
+    while (isHtmlSpace(tag[index])) index += 1;
+    if (tag[index] === '=') {
+      index += 1;
+      while (isHtmlSpace(tag[index])) index += 1;
+      const quote = tag[index] === '"' || tag[index] === "'" ? tag[index] : null;
+      if (quote) {
+        index += 1;
+        while (index < tag.length && tag[index] !== quote) index += 1;
+        if (tag[index] === quote) index += 1;
+      } else {
+        while (index < tag.length && !isHtmlSpace(tag[index]) && tag[index] !== '>') index += 1;
+      }
+    } else {
+      index = nameValueEnd;
+    }
+
+    if (attributeName !== 'style') {
+      chunks.push(tag.slice(whitespaceStart, index));
+    } else if (index < tag.length && !isHtmlSpace(tag[index]) && tag[index] !== '/' && tag[index] !== '>') {
+      chunks.push(tag.slice(whitespaceStart, attributeStart));
+    }
+  }
+  return chunks.join('');
+}
+
+export function stripInlineStyles(value) {
+  const source = String(value ?? '');
+  const chunks = [];
+  let index = 0;
+  let unchangedStart = 0;
+  while (index < source.length) {
+    if (source[index] !== '<') {
+      const nextTag = source.indexOf('<', index);
+      index = nextTag < 0 ? source.length : nextTag;
+      continue;
+    }
+    if (source.startsWith('<!--', index)) {
+      const end = source.indexOf('-->', index + 4);
+      index = end < 0 ? source.length : end + 3;
+      continue;
+    }
+    if (source.startsWith('<![CDATA[', index)) {
+      const end = source.indexOf(']]>', index + 9);
+      index = end < 0 ? source.length : end + 3;
+      continue;
+    }
+
+    const parsedTag = startTag(source, index);
+    if (!parsedTag) {
+      index += 1;
+      continue;
+    }
+    if (parsedTag.end < 0) {
+      index = source.length;
+      break;
+    }
+
+    if (parsedTag.name === 'style') {
+      chunks.push(source.slice(unchangedStart, index));
+      const end = closingTagEnd(source, parsedTag.end, 'style');
+      index = end < 0 ? source.length : end;
+      unchangedStart = index;
+      continue;
+    }
+
+    const tag = source.slice(index, parsedTag.end);
+    const strippedTag = withoutStyleAttributes(tag, parsedTag.nameEnd - index);
+    if (strippedTag !== tag) {
+      chunks.push(source.slice(unchangedStart, index), strippedTag);
+      unchangedStart = parsedTag.end;
+    }
+    index = parsedTag.end;
+
+    if (parsedTag.name === 'plaintext') {
+      index = source.length;
+      break;
+    }
+    if (RAW_TEXT_TAGS.has(parsedTag.name)) {
+      const end = closingTagEnd(source, index, parsedTag.name);
+      index = end < 0 ? source.length : end;
+    }
+  }
+  chunks.push(source.slice(unchangedStart));
+  return chunks.join('');
+}
 
 export function normText(value) {
   return String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();

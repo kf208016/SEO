@@ -558,7 +558,7 @@ test('A9 fallback sitemap 404/410 為 missing，觸發 T18 且不觸發 T37', as
   }
 });
 
-test('A9 宣告 sitemap 的 404 維持 error，觸發 T37 而不觸發 T18', async () => {
+test('B2 declared sitemap 404 is missing and triggers only T19', async () => {
   const snapshot = await audit('https://a.com/', async (url, kind) => {
     if (kind === 'robots') return result(url, {
       body: 'User-agent: *\nAllow: /\nSitemap: https://a.com/declared.xml',
@@ -571,10 +571,12 @@ test('A9 宣告 sitemap 的 404 維持 error，觸發 T37 而不觸發 T18', asy
     return simplePage(url);
   });
   assert.equal(snapshot.sitemaps[0].fallback, false);
-  assert.equal(snapshot.sitemaps[0].kind, 'error');
+  assert.equal(snapshot.sitemaps[0].kind, 'missing');
   const ids = findingIds(snapshot);
-  assert.ok(ids.has('T37'));
+  assert.ok(ids.has('T19'));
   assert.equal(ids.has('T18'), false);
+  assert.equal(ids.has('T37'), false);
+  assert.equal(snapshot.coverage.reasons.includes('sitemap_unverifiable'), false);
 });
 
 test('A10 首頁不可分析時停止 sitemap、其他頁面與 probes', async () => {

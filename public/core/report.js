@@ -112,7 +112,7 @@ function botTable(rows) {
     const body = rows.filter(r=>r.category===category).map(r=>html`<tr><td>${r.token}</td><td>${r.company}</td><td>${r.status==='declared_allowed'?'✅ 規則允許':r.status==='declared_disallowed'?'⛔ 規則封鎖':'❔ 無法判斷'}</td><td>${r.blockedUrls?.length || 0}</td><td>${r.purpose}</td></tr>`);
     if (!body.length) return '';
     const note = category==='user_fetch' ? html`<p class="muted">${'這類爬蟲實際是否遵守 robots.txt 由各服務決定'}</p>` : '';
-    return html`<section class="bot-group"><h3>${CATEGORIES[category]}</h3>${note}<div class="table-wrap"><table><thead><tr><th>爬蟲</th><th>公司</th><th>首頁規則</th><th>已檢查頁面被封鎖數</th><th>用途</th></tr></thead><tbody>${body}</tbody></table></div></section>`;
+    return html`<section class="bot-group"><h3>${CATEGORIES[category]}</h3>${note}<div class="table-wrap"><table class="bot-table"><thead><tr><th>爬蟲</th><th>公司</th><th>首頁規則</th><th>已檢查頁面被封鎖數</th><th>用途</th></tr></thead><tbody>${body}</tbody></table></div></section>`;
   });
   return groups;
 }

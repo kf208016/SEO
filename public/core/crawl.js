@@ -16,7 +16,7 @@ import {
   rulesFor,
 } from './robots.js';
 import { OUR_TOKEN } from './bots.js';
-import { decodeBody, extractPage } from './parse.js';
+import { decodeBody, extractPage, stripInlineStyles } from './parse.js';
 import { looksLikeHtml, parseSitemap } from './sitemap.js';
 
 export const SKIP_EXTENSIONS = Object.freeze([
@@ -360,7 +360,7 @@ export async function runAudit(startUrl, {
     else finalSeen.set(finalUrl, finalUrl);
     if (!duplicateOf && result.status === 200 && isHtml && !result.error && !result.accessBlocked && !result.stop) {
       try {
-        const doc = await parseHtml(text, finalUrl);
+        const doc = await parseHtml(stripInlineStyles(text), finalUrl);
         page = extractPage(doc, finalUrl);
       } catch {
         page = null;
@@ -466,7 +466,7 @@ export async function runAudit(startUrl, {
     let parsed = null;
     let error = result.error;
     if (result.stop === 'robots_disallowed') kind = 'robots_disallowed';
-    else if (fallback && (result.status === 404 || result.status === 410) && !result.error && !result.accessBlocked) {
+    else if ((result.status === 404 || result.status === 410) && !result.error && !result.accessBlocked) {
       kind = 'missing';
       error = null;
     } else if (result.status === 200 && result.bytes != null && !result.error && !result.accessBlocked && !result.truncated) {
@@ -489,7 +489,7 @@ export async function runAudit(startUrl, {
       accessBlocked: Boolean(result.accessBlocked),
     };
     sitemaps.push(record);
-    if (kind === 'error' || kind === 'robots_disallowed' || result.truncated || result.accessBlocked) reasons.add('sitemap_unverifiable');
+    if (kind !== 'missing' && (kind === 'error' || kind === 'robots_disallowed' || result.truncated || result.accessBlocked)) reasons.add('sitemap_unverifiable');
     return { record, parsed };
   }
 

@@ -5,6 +5,7 @@ import { DOMParser } from 'linkedom';
 import { html, raw, escapeHtml, safeHref } from '../public/core/html.js';
 import { renderReport } from '../public/core/report.js';
 import { VERSION } from '../public/core/version.js';
+import { BOTS } from '../public/core/bots.js';
 import { runPipeline, render, parseReport } from './helpers/pipeline.mjs';
 import * as S from './helpers/scenarios.mjs';
 import * as C from './helpers/copy.mjs';
@@ -256,5 +257,27 @@ test('A8 html returns a SafeHtml object whose String() is the HTML; nesting need
   for (const opts of [undefined, { detail: true, contactUrl: CONTACT }]) {
     const out = opts ? renderReport(r.snapshot, r.findings, r.score, r.bots, opts) : renderReport(r.snapshot, r.findings, r.score, r.bots);
     assert.equal(typeof out, 'string');
+  }
+});
+
+// ------------------------------------------------------------------ v1.6 B3: bot tables carry class bot-table
+test('B3 every robots.txt bot table (the four category groups) has class "bot-table"', async () => {
+  for (const name of ['s04', 's14']) {
+    for (const detail of [false, true]) {
+      const { doc } = await report(name, { detail });
+      const tables = new Set();
+      const cells = [...doc.querySelectorAll('td, th')];
+      for (const b of BOTS) {
+        const cell = cells.find((c) => c.textContent.trim() === b.token);
+        assert.ok(cell, `${name} detail=${detail}: a cell for ${b.token}`);
+        let t = cell;
+        while (t && String(t.tagName || '').toLowerCase() !== 'table') t = t.parentNode;
+        assert.ok(t, `${b.token} is inside a <table>`);
+        const cls = String(t.getAttribute('class') || '').split(/\s+/);
+        assert.ok(cls.includes('bot-table'), `${name} detail=${detail}: table of ${b.token} has class bot-table (got "${t.getAttribute('class')}")`);
+        tables.add(t);
+      }
+      assert.equal(tables.size, 4, `${name} detail=${detail}: one bot-table per category group`);
+    }
   }
 });
