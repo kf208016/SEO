@@ -12,7 +12,9 @@ const SEVERITY = Object.freeze({ P0:'阻斷',P1:'高',P2:'中',P3:'低',INFO:'�
 const EVIDENCE = Object.freeze({ verified:'已驗證',inferred:'推論',unverifiable:'無法驗證' });
 const CATEGORIES = Object.freeze({ search_engine:'搜尋引擎',ai_search:'AI 搜尋',training:'AI 訓練',user_fetch:'使用者即時讀取' });
 const SECTIONS = Object.freeze({ tech:'SEO 技術',content:'內容與結構',geo:'GEO' });
+const BLOCKED_BY_SITE_COPY = '這個網站的伺服器拒絕了本工具讀取（HTTP 401／403 或人機驗證）。很多網站只允許 Google 等知名爬蟲與一般瀏覽器，這不代表 Google 也被擋。本工具不會偽裝身分繞過，所以這次無法檢查；需要完整健檢，歡迎透過 LINE 官方帳號聯絡我們。';
 const COVERAGE_REASON_TEXT = Object.freeze({
+  blocked_by_site: BLOCKED_BY_SITE_COPY,
   robots_unknown: 'robots.txt 的規則無法可靠判斷',
   robots_disallow_all: 'robots.txt 的回應要求暫停讀取',
   robots_overflow: 'robots.txt 超過本工具可安全處理的規則上限',
@@ -136,8 +138,10 @@ export function renderReport(snapshot, findings, scoreObj, botRows, { detail=fal
   const info=findings.filter(f=>f.severity==='INFO');
   const normalizedContact = safeHref(contactUrl);
   const contact = normalizedContact?.startsWith('https:') ? normalizedContact : null;
-  const reasonMessages = [...new Set((snapshot.coverage?.reasons || [])
-    .map((reason) => COVERAGE_REASON_TEXT[reason] || '本次有無法完整判斷的項目'))];
+  const coverageReasons = snapshot.coverage?.reasons || [];
+  const reasonMessages = coverageReasons.includes('blocked_by_site')
+    ? [BLOCKED_BY_SITE_COPY]
+    : [...new Set(coverageReasons.map((reason) => COVERAGE_REASON_TEXT[reason] || '本次有無法完整判斷的項目'))];
   const unavailableReasons = reasonMessages.join('；') || '首頁或 robots.txt 無法可靠讀取';
   return String(html`<div class="report grade-${scoreObj.grade}">
     <header class="report-header"><h1>${'金水智連科技｜SEO／GEO 網站健檢（線上簡易版）'}</h1><dl><div><dt>網站</dt><dd>${link(snapshot.home||snapshot.startUrl)}</dd></div><div><dt>檢查時間</dt><dd>${time}</dd></div><div><dt>檢查頁數</dt><dd>${snapshot.limits?.crawled ?? snapshot.pages?.length ?? 0}／15</dd></div></dl></header>

@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runPipeline, allStrings, parseHtml } from './helpers/pipeline.mjs';
+import { BLOCKED_BY_SITE } from './helpers/copy.mjs';
 import * as S from './helpers/scenarios.mjs';
 import { SOURCES } from '../public/core/sources.js';
 import { BOTS } from '../public/core/bots.js';
@@ -326,6 +327,9 @@ test('S14 robots 403 + cf-mitigated: challenge -> policy unknown; home not fetch
   assert.ok(!has(r, 'T02'));
   assert.ok(!has(r, 'T22'));
   assert.equal(r.snapshot.coverage.status, 'failed');
+  // v1.7: an accessBlocked robots.txt is reported as blocked_by_site
+  assert.ok(r.snapshot.coverage.reasons.includes('blocked_by_site'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('robots_unknown'));
   assert.equal(r.score.grade, 'gray');
 });
 
@@ -630,7 +634,8 @@ test('A10 home not analyzable -> no sitemap, page or probe request after the hom
     ['503', S.s20, 'home_unavailable'],
     ['404', S.home404, 'home_not_analyzable'],
     ['non-HTML', S.homeNotHtml, 'home_not_analyzable'],
-    ['500 challenge', S.homeChallenge500, 'home_not_analyzable'],
+    ['500 challenge', S.homeChallenge500, 'blocked_by_site'], // v1.7: accessBlocked home
+    ['403', S.homeBlocked, 'blocked_by_site'],
   ]) {
     const r = await go(b);
     const idx = r.site.indexOf('https://a.com/', 'page');
@@ -728,11 +733,12 @@ test('COV01 start-origin robots.txt 503 -> failed with robots_disallow_all (not 
   assert.deepEqual(r.site.urls('page'), []);
 });
 
-test('COV02 start-origin robots.txt 403 + cf-mitigated: challenge -> failed with robots_unknown (not blocked_for_tool)', async () => {
+test('COV02 start-origin robots.txt 403 + cf-mitigated: challenge -> failed with blocked_by_site (v1.7; not robots_unknown, not blocked_for_tool)', async () => {
   const r = await go(S.s14);
   assert.equal(r.snapshot.robots.ourPolicy.policy, 'unknown');
   assert.equal(r.snapshot.coverage.status, 'failed');
-  assert.ok(r.snapshot.coverage.reasons.includes('robots_unknown'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(r.snapshot.coverage.reasons.includes('blocked_by_site'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('robots_unknown'));
   assert.ok(!r.snapshot.coverage.reasons.includes('blocked_for_tool'));
   assert.equal(r.snapshot.homeSkippedByRobots, false);
   assert.deepEqual(r.site.urls('page'), []);
@@ -748,11 +754,10 @@ test('COV03 robots disallows only KinsuiSEOCheck for / -> blocked_for_tool and h
   assert.deepEqual(r.site.urls('page'), []);
 });
 
-test('COV04 final-origin robots unknown after the home redirect -> robots_final_unknown; score unavailable, null, gray', async () => {
-  // AMBIGUOUS: §5.7 fetchFollow checks ourAllowed before every hop and returns finalUrl = the last REQUESTED URL,
-  // so https://a.com/ (unknown policy) is never requested and a literal reading keeps origin = https://www.a.com.
-  // Step 4 only makes sense if home/origin is the redirect target https://a.com/; this test follows step 4.
-  const r = await go(S.finalOriginRobotsUnknown);
+test('COV04 final-origin robots unknown (network error, not blocked) after the home redirect -> robots_final_unknown; score unavailable, null, gray', async () => {
+  // v1.6 §5.7 fetchFollow exception: a hop stopped by robots sets finalUrl to the blocked hop, so origin = https://a.com.
+  // v1.7: the a.com robots answer is a network error (not accessBlocked), so the reason stays robots_final_unknown.
+  const r = await go(S.finalOriginRobotsNetworkError);
   assert.equal(r.snapshot.coverage.status, 'failed');
   assert.ok(r.snapshot.coverage.reasons.includes('robots_final_unknown'), JSON.stringify(r.snapshot.coverage.reasons));
   assert.equal(r.snapshot.origin, 'https://a.com');
@@ -781,6 +786,88 @@ test('COV05 final-origin robots unknown: no sitemap, page or probe request after
   assert.ok(!r.site.requested('https://a.com/', 'page'), 'https://a.com/ must not be requested: its ourPolicy is unknown (§5.7 fetchFollow, DO robots_disallowed)');
   assert.ok(!r.site.requests.some((q) => q.kind === 'sitemap' || q.kind === 'probe'));
   assert.deepEqual(r.site.violations, []);
+});
+
+// ------------------------------------------------------------------ v1.7 blocked_by_site
+const REPLACED = ['robots_unknown', 'robots_final_unknown', 'home_not_analyzable'];
+function assertBlockedBySite(r, label) {
+  const reasons = r.snapshot.coverage.reasons;
+  assert.equal(r.snapshot.coverage.status, 'failed', label);
+  assert.equal(r.snapshot.coverage.defects, true, label);
+  assert.equal(reasons.filter((x) => x === 'blocked_by_site').length, 1, `${label}: blocked_by_site exactly once in ${JSON.stringify(reasons)}`);
+  for (const x of REPLACED) assert.ok(!reasons.includes(x), `${label}: ${x} must be replaced by blocked_by_site`);
+  assert.equal(r.score.scoreStatus, 'unavailable', label);
+  assert.equal(r.score.score, null, label);
+}
+
+test('BLK01 start robots.txt 403 (no cf-mitigated) -> blocked_by_site, not robots_unknown; home not requested', async () => {
+  for (const b of [S.robots403Plain, S.robots401]) {
+    const r = await go(b);
+    assert.equal(r.snapshot.robots.accessBlocked, true, b.name);
+    assertBlockedBySite(r, b.name);
+    assert.deepEqual(r.site.urls('page'), [], b.name);
+    assert.deepEqual(kinds(r.site), ['robots'], b.name);
+  }
+});
+
+test('BLK02 start robots.txt 403 + cf-mitigated: challenge (S14 site) -> blocked_by_site; robots 503 challenge too', async () => {
+  for (const b of [S.s14, S.robotsChallenge503]) {
+    const r = await go(b);
+    assertBlockedBySite(r, b.name);
+    assert.deepEqual(r.site.urls('page'), [], b.name);
+  }
+});
+
+test('BLK03 robots allows all but the home page answers 403 / 401 / 500 challenge -> blocked_by_site, not home_not_analyzable', async () => {
+  for (const b of [S.homeBlocked, S.home401, S.homeChallenge500]) {
+    const r = await go(b);
+    assert.equal(r.snapshot.pages[0].accessBlocked, true, b.name);
+    assertBlockedBySite(r, b.name);
+    assert.deepEqual(r.site.urls('page'), ['https://a.com/'], b.name);
+  }
+});
+
+test('BLK04 www robots allow-all, www home 301 -> a.com, a.com robots.txt 403 (plain or challenge) -> blocked_by_site, not robots_final_unknown', async () => {
+  for (const b of [S.finalOriginRobots403, S.finalOriginRobotsUnknown]) {
+    const r = await go(b);
+    assert.equal(r.snapshot.origin, 'https://a.com', b.name);
+    assert.equal(r.snapshot.robots.accessBlocked, true, b.name);
+    assertBlockedBySite(r, b.name);
+    assert.ok(!r.site.requested('https://a.com/', 'page'), b.name + ': a.com home must not be requested');
+    assert.ok(!r.site.requests.some((q) => q.kind === 'sitemap' || q.kind === 'probe'), b.name);
+  }
+});
+
+test('BLK05 contrast: start robots.txt network error (status 0) -> still robots_unknown, not blocked_by_site', async () => {
+  const r = await go(S.robotsNetworkError);
+  assert.equal(r.snapshot.robots.accessBlocked, false);
+  assert.equal(r.snapshot.robots.status, 0);
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.ok(r.snapshot.coverage.reasons.includes('robots_unknown'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('blocked_by_site'));
+  assert.deepEqual(r.site.urls('page'), []);
+});
+
+test('BLK06 contrast: non-blocked failures keep their reasons (robots 503, home 404, home non-HTML, final-origin network error)', async () => {
+  for (const [b, reason] of [
+    [S.s07, 'robots_disallow_all'],
+    [S.home404, 'home_not_analyzable'],
+    [S.homeNotHtml, 'home_not_analyzable'],
+    [S.finalOriginRobotsNetworkError, 'robots_final_unknown'],
+  ]) {
+    const r = await go(b);
+    assert.ok(r.snapshot.coverage.reasons.includes(reason), `${b.name}: ${reason} in ${JSON.stringify(r.snapshot.coverage.reasons)}`);
+    assert.ok(!r.snapshot.coverage.reasons.includes('blocked_by_site'), b.name);
+  }
+});
+
+test('BLK07 T29 summary for a blocked_by_site audit is the §9 copy verbatim', async () => {
+  for (const b of [S.robots403Plain, S.s14, S.homeBlocked, S.finalOriginRobots403]) {
+    const r = await go(b);
+    assert.ok(has(r, 'T29'), b.name);
+    assert.equal(r.byId.T29.summary, BLOCKED_BY_SITE, b.name);
+    assert.ok(r.byId.T29.data.reasons.includes('blocked_by_site'), b.name);
+  }
 });
 
 // ------------------------------------------------------------------ invariants over every scenario

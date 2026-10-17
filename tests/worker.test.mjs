@@ -183,7 +183,7 @@ test('W07 GET /api/config works without configuration checks', async () => {
   assert.equal(body.contactUrl, env.CONTACT_URL);
   assert.equal(body.maxPages, 15);
   assert.equal(body.version, VERSION);
-  assert.equal(VERSION, '1.6.0');
+  assert.equal(VERSION, '1.7.0');
 });
 
 // ------------------------------------------------------------------ W07 POST common checks

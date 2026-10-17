@@ -153,8 +153,8 @@ test('SOURCES: every id with exact title and url', () => {
   for (const b of BOTS) assert.ok(SOURCES[b.source], 'BOTS source exists: ' + b.source);
 });
 
-test('VERSION is 1.6.0', () => {
-  assert.equal(VERSION, '1.6.0');
+test('VERSION is 1.7.0', () => {
+  assert.equal(VERSION, '1.7.0');
 });
 
 // ------------------------------------------------------------------ url.js

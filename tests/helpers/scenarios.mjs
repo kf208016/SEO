@@ -463,16 +463,51 @@ export function workerUnknownOverflow() {
 
 // COV04/COV05 (§5.7 step 4): start https://www.a.com/, www robots allows, www home 301 -> https://a.com/,
 // a.com robots.txt is a 403 challenge (Worker ourPolicy unknown)
-export function finalOriginRobotsUnknown() {
+// final origin https://a.com reached via www home 301; its robots.txt answer is `aRobots`
+function finalOriginRobots(aRobots) {
   const routes = {
     'https://www.a.com/robots.txt': { text: ALLOW_ROBOTS },
     'https://www.a.com/': { status: 301, location: 'https://a.com/' },
-    'https://a.com/robots.txt': { status: 403, html: '<html><body>Just a moment...</body></html>', headers: { 'cf-mitigated': 'challenge' } },
+    'https://a.com/robots.txt': aRobots,
     'https://a.com/': { html: page({ title: '金水範例公司｜首頁內容', canonical: 'https://a.com/', links: ['/about'] }) },
     'https://a.com/about': { html: page({ title: '金水範例公司｜關於我們', canonical: 'https://a.com/about', links: ['/'] }) },
     'https://a.com/sitemap.xml': { xml: sitemapXml(['https://a.com/', 'https://a.com/about']) },
   };
   return { site: createFakeSite({ routes }), start: 'https://www.a.com/' };
+}
+// a.com robots is a 403 challenge (accessBlocked) -> v1.7 blocked_by_site
+export const finalOriginRobotsUnknown = () =>
+  finalOriginRobots({ status: 403, html: '<html><body>Just a moment...</body></html>', headers: { 'cf-mitigated': 'challenge' } });
+// a.com robots is a plain 403 (accessBlocked) -> v1.7 blocked_by_site
+export const finalOriginRobots403 = () => finalOriginRobots({ status: 403, html: '<html><body>Forbidden</body></html>' });
+// a.com robots fails with a network error (not accessBlocked) -> still robots_final_unknown
+export const finalOriginRobotsNetworkError = () => finalOriginRobots({ error: 'network' });
+
+// ---------------------------------------------------------------- v1.7 blocked_by_site
+// start robots.txt plain 403 (no cf-mitigated)
+export function robots403Plain() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/robots.txt'] = { status: 403, html: '<html><body>Forbidden</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+// start robots.txt 401
+export function robots401() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/robots.txt'] = { status: 401, html: '<html><body>Unauthorized</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+// robots allows all, home page answers `status` (403 / 401)
+export function homeBlocked(status = 403) {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/'] = { status, html: '<html><body>Forbidden</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+export const home401 = () => homeBlocked(401);
+// start robots.txt network error -> still robots_unknown
+export function robotsNetworkError() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/robots.txt'] = { error: 'network' };
+  return { site: createFakeSite({ routes }), start: START };
 }
 
 export const ALL_SCENARIOS = {
@@ -487,4 +522,11 @@ export const ALL_SCENARIOS = {
   declaredSitemapXml410,
   styledOn: () => styledSite(true),
   styledOff: () => styledSite(false),
+  finalOriginRobots403,
+  finalOriginRobotsNetworkError,
+  robots403Plain,
+  robots401,
+  homeBlocked,
+  home401,
+  robotsNetworkError,
 };

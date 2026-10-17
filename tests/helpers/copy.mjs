@@ -96,3 +96,6 @@ export function splitTemplate(t, name) {
   const i = t.indexOf('{' + name + '}');
   return [t.slice(0, i), t.slice(i + name.length + 2)];
 }
+
+// v1.7 §9「網站拒絕本工具（blocked_by_site）」: reason text for 無法評分 and T29 summary
+export const BLOCKED_BY_SITE = '這個網站的伺服器拒絕了本工具讀取（HTTP 401／403 或人機驗證）。很多網站只允許 Google 等知名爬蟲與一般瀏覽器，這不代表 Google 也被擋。本工具不會偽裝身分繞過，所以這次無法檢查；需要完整健檢，歡迎透過 LINE 官方帳號聯絡我們。';

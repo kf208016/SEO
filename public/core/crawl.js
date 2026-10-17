@@ -28,6 +28,7 @@ export const SKIP_EXTENSIONS = Object.freeze([
 export const CRAWL_LIMITS = Object.freeze({ discovered: 5000, inlinksPerUrl: 50, maxHops: 5 });
 
 const FAILURE_REASONS = new Set([
+  'blocked_by_site',
   'robots_unknown', 'robots_disallow_all', 'robots_overflow', 'blocked_for_tool',
   'home_not_analyzable', 'home_unavailable', 'offsite', 'robots_final_unknown',
 ]);
@@ -37,6 +38,7 @@ const DEFECT_REASONS = new Set([
   'sitemap_unverifiable', 'parse_limit', 'budget_exhausted',
 ]);
 const REASON_ORDER = [
+  'blocked_by_site',
   'robots_unknown', 'robots_disallow_all', 'robots_overflow', 'blocked_for_tool',
   'home_not_analyzable', 'home_unavailable', 'offsite', 'robots_final_unknown',
   'fetch_errors', 'access_blocked', 'truncated', 'timed_out', 'page_unanalyzable',
@@ -181,6 +183,7 @@ export async function runAudit(startUrl, {
   }
 
   function robotsFailureReason(info) {
+    if (info?.accessBlocked) return 'blocked_by_site';
     if (info?.parsed?.overflow) return 'robots_overflow';
     if (info?.ourPolicy?.policy === 'disallow_all') return 'robots_disallow_all';
     return 'robots_unknown';
@@ -403,7 +406,7 @@ export async function runAudit(startUrl, {
   }
 
   if (!robots?.ourPolicy || ['disallow_all', 'unknown'].includes(robots.ourPolicy.policy)) {
-    reasons.add('robots_final_unknown');
+    reasons.add(robots?.accessBlocked ? 'blocked_by_site' : 'robots_final_unknown');
     return finalizeSnapshot({
       version: VERSION, startUrl: start, siteHost, origin, home, scannedAt: taipeiIso(now()), robots,
       robotsInitial, sitemaps: [], sitemapUrls: [], pages, discovered,
@@ -412,10 +415,13 @@ export async function runAudit(startUrl, {
   }
 
   if (!homeAnalyzable) {
-    reasons.add([429, 503].includes(homeEntry.status) ? 'home_unavailable' : 'home_not_analyzable');
-    if (homeEntry.error) reasons.add('fetch_errors');
-    if (homeEntry.accessBlocked) reasons.add('access_blocked');
-    if (homeEntry.truncated) reasons.add('truncated');
+    if (homeEntry.accessBlocked) {
+      reasons.add('blocked_by_site');
+    } else {
+      reasons.add([429, 503].includes(homeEntry.status) ? 'home_unavailable' : 'home_not_analyzable');
+      if (homeEntry.error) reasons.add('fetch_errors');
+      if (homeEntry.truncated) reasons.add('truncated');
+    }
     return finalizeSnapshot({
       version: VERSION, startUrl: start, siteHost, origin, home, scannedAt: taipeiIso(now()), robots,
       robotsInitial, sitemaps: [], sitemapUrls: [], pages, discovered,

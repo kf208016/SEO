@@ -281,3 +281,17 @@ test('B3 every robots.txt bot table (the four category groups) has class "bot-ta
     }
   }
 });
+
+// ------------------------------------------------------------------ v1.7 blocked_by_site copy in the report
+test('BLK08 report of a blocked_by_site audit shows the §9 「網站拒絕本工具」 copy verbatim (simple and full mode)', async () => {
+  for (const name of ['robots403Plain', 's14', 'homeBlocked', 'finalOriginRobots403']) {
+    for (const detail of [false, true]) {
+      const { r, doc, text } = await report(name, { detail, contactUrl: CONTACT });
+      assert.ok(r.snapshot.coverage.reasons.includes('blocked_by_site'), name);
+      assert.equal(r.score.scoreStatus, 'unavailable', name);
+      assert.ok(text.includes('無法評分'), `${name} detail=${detail}: 無法評分`);
+      assert.ok(text.includes(C.BLOCKED_BY_SITE), `${name} detail=${detail}: blocked_by_site copy`);
+      assertSafeDom(doc, `${name} detail=${detail}`);
+    }
+  }
+});

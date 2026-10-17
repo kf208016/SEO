@@ -6,6 +6,7 @@ import { cleanUrl, pathAndQuery, stripWww } from './url.js';
 const BAD_STATUSES = new Set([404, 410, 500, 501, 502, 504]);
 const REDIRECT_RELATED_STOPS = new Set(['offsite', 'bad_redirect', 'loop', 'max_hops', 'location_too_long']);
 const SEVERITY_ORDER = { P0: 0, P1: 1, P2: 2, P3: 3, INFO: 4 };
+const BLOCKED_BY_SITE_COPY = '這個網站的伺服器拒絕了本工具讀取（HTTP 401／403 或人機驗證）。很多網站只允許 Google 等知名爬蟲與一般瀏覽器，這不代表 Google 也被擋。本工具不會偽裝身分繞過，所以這次無法檢查；需要完整健檢，歡迎透過 LINE 官方帳號聯絡我們。';
 const GENERIC = Object.freeze({
   T01: ['首頁無法正常讀取', '首頁回應錯誤或陷入轉址循環。'],
   T05: ['多個頁面設定 noindex', '本次樣本中有一半以上的內頁禁止收錄。'],
@@ -200,7 +201,13 @@ export function runChecks(snapshot) {
   }
   if (robots && [404,410].includes(robots.status)) add('T22','robots_missing','tech','INFO','verified',[robots.url],{},1);
   if (snapshot?.stoppedOffsite) add('T28','home_redirect_offsite','tech','INFO','verified',[homeUrl],{},1);
-  if (snapshot?.coverage?.status === 'failed' && !findings.some(f => ['T01','T28'].includes(f.id))) add('T29','home_unverifiable','tech','INFO','unverifiable',[homeUrl],{reasons:snapshot.coverage.reasons || []},1);
+  if (snapshot?.coverage?.status === 'failed' && !findings.some(f => ['T01','T28'].includes(f.id))) {
+    const coverageReasons = snapshot.coverage.reasons || [];
+    const text = coverageReasons.includes('blocked_by_site')
+      ? [GENERIC.T29[0], BLOCKED_BY_SITE_COPY]
+      : null;
+    add('T29','home_unverifiable','tech','INFO','unverifiable',[homeUrl],{reasons:coverageReasons},1,text);
+  }
   if (robots?.truncated) add('T39','robots_truncated','tech','INFO','verified',[robots.url],{},1);
 
   const blockedByCategory = category => bots.filter(b => b.category === category && b.status === 'declared_disallowed');
