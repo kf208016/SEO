@@ -27,6 +27,6 @@ test('C2 favicon 是深藍底、白色放大鏡且沒有 script 或外部參照�
   assert.doesNotMatch(source, /url\s*\(/iu);
 });
 
-test('C2 公開版本為 1.7.0', () => {
-  assert.equal(VERSION, '1.7.0');
+test('C2 公開版本為 1.8.0', () => {
+  assert.equal(VERSION, '1.8.0');
 });

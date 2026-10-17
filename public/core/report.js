@@ -132,7 +132,13 @@ function detailedAppendix(snapshot) {
 export function renderReport(snapshot, findings, scoreObj, botRows, { detail=false, contactUrl=null }={}) {
   const time = String(snapshot?.scannedAt || '').replace('T',' ').slice(0,16);
   const scoreLabel = scoreObj.scoreStatus==='unavailable' ? '無法評分' : scoreObj.scoreStatus==='sample_only' ? '樣本分數' : '分數';
-  const sectionSummary = Object.keys(SECTIONS).map(key=>html`<div class="summary-tile"><strong>${SECTIONS[key]}</strong><span>${findings.filter(f=>f.section===key&&f.scored).length} 個計分問題</span></div>`);
+  const sectionSummary = Object.keys(SECTIONS).map(key=>{
+    const count=findings.filter(f=>f.section===key&&f.scored).length;
+    const label=scoreObj.scoreStatus==='unavailable'&&count===0?'未檢查':`${count} 個計分問題`;
+    return html`<div class="summary-tile"><strong>${SECTIONS[key]}</strong><span>${label}</span></div>`;
+  });
+  const hideSeverityCounts=scoreObj.scoreStatus==='unavailable'&&['P0','P1','P2','P3'].every(key=>scoreObj.counts[key]===0);
+  const severityCounts=hideSeverityCounts?'':html`<p>P0 ${scoreObj.counts.P0}　P1 ${scoreObj.counts.P1}　P2 ${scoreObj.counts.P2}　P3 ${scoreObj.counts.P3}</p>`;
   const priorities=findings.filter(f=>['P0','P1','P2'].includes(f.severity));
   const small=findings.filter(f=>f.severity==='P3');
   const info=findings.filter(f=>f.severity==='INFO');
@@ -145,7 +151,7 @@ export function renderReport(snapshot, findings, scoreObj, botRows, { detail=fal
   const unavailableReasons = reasonMessages.join('；') || '首頁或 robots.txt 無法可靠讀取';
   return String(html`<div class="report grade-${scoreObj.grade}">
     <header class="report-header"><h1>${'金水智連科技｜SEO／GEO 網站健檢（線上簡易版）'}</h1><dl><div><dt>網站</dt><dd>${link(snapshot.home||snapshot.startUrl)}</dd></div><div><dt>檢查時間</dt><dd>${time}</dd></div><div><dt>檢查頁數</dt><dd>${snapshot.limits?.crawled ?? snapshot.pages?.length ?? 0}／15</dd></div></dl></header>
-    <section class="score-panel"><div><p>${scoreLabel}</p><strong>${scoreObj.score ?? '—'}</strong></div><div><h2>${GRADE_TEXT[scoreObj.grade]}</h2>${scoreObj.scoreStatus==='sample_only'?html`<p>${'本次只檢查部分頁面'}</p>`:''}${scoreObj.scoreStatus==='unavailable'?html`<p>${unavailableReasons}</p>`:''}${scoreObj.capped?html`<p>${scoreObj.counts.P0?'因為有阻斷級問題，分數上限為 40 分':'因為有高風險問題，分數上限為 79 分'}</p>`:''}<p>P0 ${scoreObj.counts.P0}　P1 ${scoreObj.counts.P1}　P2 ${scoreObj.counts.P2}　P3 ${scoreObj.counts.P3}</p></div></section>
+    <section class="score-panel"><div><p>${scoreLabel}</p><strong>${scoreObj.score ?? '—'}</strong></div><div><h2>${GRADE_TEXT[scoreObj.grade]}</h2>${scoreObj.scoreStatus==='sample_only'?html`<p>${'本次只檢查部分頁面'}</p>`:''}${scoreObj.scoreStatus==='unavailable'?html`<p>${unavailableReasons}</p>`:''}${scoreObj.capped?html`<p>${scoreObj.counts.P0?'因為有阻斷級問題，分數上限為 40 分':'因為有高風險問題，分數上限為 79 分'}</p>`:''}${severityCounts}</div></section>
     <section><h2>三區塊摘要</h2><div class="summary-grid">${sectionSummary}</div></section>
     <section><h2>robots.txt 對各爬蟲的規則</h2>${botTable(botRows||[])}</section>
     <section><h2>優先處理</h2>${priorities.length?priorities.map(f=>card(f,detail)):html`<p class="empty-state">${'本次樣本沒有發現 P0–P2 問題。'}</p>`}</section>

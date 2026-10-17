@@ -530,3 +530,11 @@ export const ALL_SCENARIOS = {
   home401,
   robotsNetworkError,
 };
+
+// v1.8: unavailable audit whose only scored finding is T03 (robots blocks Googlebot only; home 503)
+export function googlebotBlockedHome503() {
+  const routes = goodSiteRoutes({ robots: 'User-agent: Googlebot\nDisallow: /\n\nUser-agent: *\nDisallow:\n' });
+  routes['https://a.com/'] = { status: 503, html: '<html><body>Service Unavailable</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+ALL_SCENARIOS.googlebotBlockedHome503 = googlebotBlockedHome503;

@@ -295,3 +295,99 @@ test('BLK08 report of a blocked_by_site audit shows the §9 「網站拒絕本�
     }
   }
 });
+
+// ------------------------------------------------------------------ v1.8 §8 items 2–3: section tiles and the P0–P3 line
+const SECTION_KEYS = [
+  ['tech', '技術'],
+  ['content', '內容'],
+  ['geo', 'GEO'],
+];
+const TILE_RE = /(\d+)\s*個計分問題|未檢查/;
+// AMBIGUOUS: the wording of the P0–P3 count line is not fixed by the spec; assumed to show the codes P0, P1, P2, P3 each followed by a number.
+const P_LINE_RE = /P0\D{0,20}\d+[\s\S]{0,80}?P1\D{0,20}\d+[\s\S]{0,80}?P2\D{0,20}\d+[\s\S]{0,80}?P3\D{0,20}\d+/;
+
+// Map each section tile to what it shows: a number (n 個計分問題) or '未檢查'.
+// A tile is the smallest element showing a count; its section is the nearest element (itself or an ancestor)
+// whose text names exactly one section (技術 / 內容 / GEO). The first tile found per section wins.
+function tileMap(doc) {
+  const map = {};
+  const els = [...doc.querySelectorAll('*')];
+  const minimal = els.filter((e) => TILE_RE.test(e.textContent) && ![...(e.children || [])].some((c) => TILE_RE.test(c.textContent)));
+  for (const el of minimal) {
+    const m = el.textContent.match(TILE_RE);
+    const value = m[1] !== undefined ? Number(m[1]) : '未檢查';
+    for (let a = el; a && a.textContent !== undefined; a = a.parentNode) {
+      const hits = SECTION_KEYS.filter(([, k]) => String(a.textContent).includes(k));
+      if (hits.length === 0) continue;
+      if (hits.length === 1 && !(hits[0][0] in map)) map[hits[0][0]] = value;
+      break;
+    }
+  }
+  return map;
+}
+
+function expectedTiles(r) {
+  const out = {};
+  for (const sec of ['tech', 'content', 'geo']) {
+    const n = r.findings.filter((f) => f.scored && f.section === sec).length;
+    out[sec] = r.score.scoreStatus === 'unavailable' && n === 0 ? '未檢查' : n;
+  }
+  return out;
+}
+
+test('V18 unavailable audit with no scored findings: every section tile shows 未檢查 (never 0 個計分問題) and the P0–P3 line is hidden', async () => {
+  for (const name of ['robots403Plain', 's14', 's20']) {
+    for (const detail of [false, true]) {
+      const { r, doc, text } = await report(name, { detail });
+      const label = `${name} detail=${detail}`;
+      assert.equal(r.score.scoreStatus, 'unavailable', label);
+      assert.ok(r.findings.every((f) => !f.scored), label + ': precondition, only INFO findings');
+      assert.deepEqual(tileMap(doc), { tech: '未檢查', content: '未檢查', geo: '未檢查' }, label);
+      assert.ok(!/\d+\s*個計分問題/.test(text), label + ': no "n 個計分問題" anywhere');
+      assert.ok(!P_LINE_RE.test(text), label + ': P0–P3 line must be hidden');
+    }
+  }
+});
+
+test('V18 unavailable audit with only a P0 T03: SEO 技術 tile shows 1 個計分問題, the other two 未檢查, P0–P3 line shown', async () => {
+  for (const detail of [false, true]) {
+    const { r, doc, text } = await report('googlebotBlockedHome503', { detail });
+    const label = `detail=${detail}`;
+    assert.equal(r.score.scoreStatus, 'unavailable', label);
+    assert.deepEqual(r.findings.filter((f) => f.scored).map((f) => f.id), ['T03'], label + ': precondition');
+    assert.deepEqual(tileMap(doc), { tech: 1, content: '未檢查', geo: '未檢查' }, label);
+    assert.ok(text.includes('1 個計分問題') || /1\s*個計分問題/.test(text), label);
+    assert.ok(!/0\s*個計分問題/.test(text), label + ': no "0 個計分問題"');
+    assert.ok(P_LINE_RE.test(text), label + ': P0–P3 line shown');
+  }
+});
+
+test('V18 S02 (robots "*" Disallow: /, unavailable): tiles follow the scored findings per section (T03 tech; G01/G02 geo), zero sections show 未檢查', async () => {
+  for (const detail of [false, true]) {
+    const { r, doc, text } = await report('s02', { detail });
+    const label = `detail=${detail}`;
+    assert.equal(r.score.scoreStatus, 'unavailable', label);
+    const exp = expectedTiles(r);
+    assert.equal(exp.tech, 1, label + ': precondition, T03 is the only scored tech finding');
+    assert.equal(exp.content, '未檢查', label);
+    assert.deepEqual(tileMap(doc), exp, label);
+    assert.ok(!/(^|\D)0\s*個計分問題/.test(text), label + ': no "0 個計分問題"');
+    assert.ok(P_LINE_RE.test(text), label + ': P0–P3 line shown');
+  }
+});
+
+test('V18 valid / sample_only audits (S01, S13): sections without scored findings show 0 個計分問題 and the P0–P3 line is shown', async () => {
+  for (const name of ['s01', 's13']) {
+    for (const detail of [false, true]) {
+      const { r, doc, text } = await report(name, { detail });
+      const label = `${name} detail=${detail}`;
+      assert.notEqual(r.score.scoreStatus, 'unavailable', label);
+      const exp = expectedTiles(r); // n per section, 0 allowed (behaviour unchanged when not unavailable)
+      assert.ok(Object.values(exp).includes(0), label + ': precondition, at least one section without scored findings');
+      assert.deepEqual(tileMap(doc), exp, label);
+      assert.ok(/(^|\D)0\s*個計分問題/.test(text), label + ': "0 個計分問題" shown');
+      assert.ok(!text.includes('未檢查'), label + ': 未檢查 only when unavailable');
+      assert.ok(P_LINE_RE.test(text), label + ': P0–P3 line shown');
+    }
+  }
+});
