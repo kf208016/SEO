@@ -1,0 +1,16 @@
+{
+  "name": "seo-geo-check",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "金水智連科技 SEO／GEO 線上網站健檢（第一階段線上簡易版）",
+  "scripts": {
+    "test": "node --test tests/ tests_impl/",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.13",
+    "wrangler": "4.147.0"
+  }
+}
