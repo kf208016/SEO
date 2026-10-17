@@ -5,7 +5,7 @@
   "type": "module",
   "description": "金水智連科技 SEO／GEO 線上網站健檢（第一階段線上簡易版）",
   "scripts": {
-    "test": "node --test tests/ tests_impl/",
+    "test": "node --test \"tests/**/*.test.mjs\" \"tests_impl/**/*.test.mjs\"",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
