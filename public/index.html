@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SEO／GEO 網站健檢｜金水智連科技</title>
+  <meta name="description" content="讀取公開網頁的原始 HTML 與 robots.txt，提供可追溯的 SEO／GEO 技術健檢。">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="shell"><a class="brand" href="/">金水智連科技</a><span>SEO／GEO 網站健檢</span></div></header>
+  <main>
+    <section class="hero shell">
+      <p class="eyebrow">線上簡易版</p>
+      <h1>看清網站是否能被搜尋引擎與 AI 正確讀取</h1>
+      <p class="lead">最多檢查 15 個公開頁面，從原始 HTML、robots.txt、sitemap 與爬蟲規則找出可驗證的問題。</p>
+      <form id="audit-form" novalidate>
+        <label for="site-url">網站網址</label>
+        <div class="form-row"><input id="site-url" name="url" type="url" inputmode="url" autocomplete="url" maxlength="2048" placeholder="https://example.com" required><button id="submit-button" type="submit">開始健檢</button></div>
+        <div id="turnstile" class="turnstile-box"></div>
+        <p id="form-status" class="status" role="status" aria-live="polite"></p>
+      </form>
+      <div class="privacy-note">
+        <h2>隱私與使用說明</h2>
+        <ul>
+          <li>我們不建立名單、不保存檢查結果。為了防止濫用，Cloudflare 會短暫處理你的 IP 位址與人機驗證資料。</li>
+          <li>請只輸入公開網頁的網址，不要輸入需要登入、含個人資料或一次性連結的網址；網址中的查詢參數會被移除。</li>
+          <li>網站管理者如果不希望被本工具讀取，可以在 robots.txt 對 KinsuiSEOCheck 設定 Disallow，或透過 <span id="privacy-contact">LINE 官方帳號</span>聯絡我們。</li>
+        </ul>
+      </div>
+    </section>
+    <section id="progress-panel" class="progress-panel shell" hidden><h2>正在檢查</h2><p id="progress-text">準備中…</p><progress id="progress-bar" max="15" value="0"></progress></section>
+    <nav id="report-actions" class="report-actions shell no-print" hidden aria-label="報告操作">
+      <button id="toggle-detail" type="button">切換完整報告</button><button id="print-report" type="button">列印或存成 PDF</button><button id="download-json" type="button">下載 JSON</button><button id="restart" type="button">重新檢查</button>
+    </nav>
+    <section id="report-output" class="shell report-output" aria-live="polite"></section>
+  </main>
+  <footer class="site-footer"><div class="shell">金水智連科技｜以可驗證的資料改善網站基礎</div></footer>
+</body>
+</html>
