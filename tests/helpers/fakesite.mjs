@@ -11,7 +11,7 @@
 //   - Every call is recorded in `requests` as { url, kind } in order.
 //
 // Route spec: { status=200, html | text | xml | body(+type), headers, location, error: 'network'|'timeout' }
-// or a function (url) -> spec. Unknown URLs fall back to `fallback(url)`, then (optionally) http->https 301,
+// or a function (url) -> spec. Option forceOurPolicy(origin) overrides the Worker's ourPolicy (and the DO's stored policy). Unknown URLs fall back to `fallback(url)`, then (optionally) http->https 301,
 // then a 404 HTML page.
 
 import {
@@ -126,7 +126,7 @@ export function proxyErrorResult(url, error) {
   };
 }
 
-export function createFakeSite({ routes = {}, fallback = null, httpToHttps = true, siteHost = null } = {}) {
+export function createFakeSite({ routes = {}, fallback = null, httpToHttps = true, siteHost = null, forceOurPolicy = null } = {}) {
   const requests = [];
   const violations = [];
   const budgetRefusals = [];
@@ -282,7 +282,6 @@ export function createFakeSite({ routes = {}, fallback = null, httpToHttps = tru
         break;
       }
       if (REDIRECTS.includes(r.status) && r.location) {
-        chain.push({ url: current, status: r.status, location: r.location });
         if (hops >= 5) {
           stop = 'max_hops';
           break;
@@ -308,6 +307,8 @@ export function createFakeSite({ routes = {}, fallback = null, httpToHttps = tru
           break;
         }
         used.robots++;
+        // v1.5: chain records only the 3xx hops that were actually followed
+        chain.push({ url: current, status: r.status, location: r.location });
         seen.add(next.href);
         hops++;
         current = next.href;
@@ -319,7 +320,10 @@ export function createFakeSite({ routes = {}, fallback = null, httpToHttps = tru
     r.stop = stop;
     r.finalUrl = current;
     if (r.error || r.skipped) r.bytes = null;
-    const pol = computeOurPolicy(r);
+    let pol = computeOurPolicy(r);
+    // forceOurPolicy(origin) -> policy string: simulate the Worker (and DO) deciding differently from a local parse
+    const forced = forceOurPolicy ? forceOurPolicy(new URL(url).origin) : undefined;
+    if (forced) pol = { policy: forced, rules: [], rulesCount: pol.rulesCount };
     r.ourPolicy = { policy: pol.policy, rulesCount: pol.rulesCount };
     const origins = new Set([new URL(url).origin, ...chain.map((c) => new URL(c.url).origin), new URL(current).origin]);
     for (const o of origins) policyByOrigin.set(o, { policy: pol.policy, rules: pol.rules });

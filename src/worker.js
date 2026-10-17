@@ -15,6 +15,10 @@ const rejected = new Map();
 const TEST_PREFIXES = ['1x0000', '2x0000', '3x0000'];
 const encoder = new TextEncoder();
 
+function isLocalHostname(hostname) {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
     status,
@@ -33,7 +37,7 @@ function selfHosts(requestUrl, env) {
 
 function misconfigured(env, hostname) {
   if (!env.AUDIT_GATE || !env.TURNSTILE_SECRET || !env.TURNSTILE_SITEKEY || typeof env.AUDIT_SECRET !== 'string' || env.AUDIT_SECRET.length < 32) return true;
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+  if (!isLocalHostname(hostname)) {
     if (TEST_PREFIXES.some((prefix) => String(env.TURNSTILE_SECRET).startsWith(prefix) || String(env.TURNSTILE_SITEKEY).startsWith(prefix))) return true;
   }
   return false;
@@ -110,7 +114,11 @@ async function turnstile(env, token, ip, hostname) {
       method: 'POST', body, signal: AbortSignal.timeout(5000),
     });
     const data = await response.json();
-    return data.success === true && data.action === 'audit_start' && ((hostname === 'localhost' || hostname === '127.0.0.1') || data.hostname === hostname);
+    const local = isLocalHostname(hostname);
+    const testingKey = local && data?.metadata?.result_with_testing_key === true;
+    return data.success === true
+      && (testingKey || data.action === 'audit_start')
+      && (testingKey || local || data.hostname === hostname);
   } catch {
     return false;
   }
@@ -173,7 +181,13 @@ async function fetchTarget(request, requestUrl, env) {
     );
     return result;
   };
-  const result = await proxyFetch(checked.url, k, consumed.host, { selfHosts: selfHosts(requestUrl, env), permit });
+  const skipDnsPrecheck = isLocalHostname(requestUrl.hostname) && env.DEV_SKIP_DNS_PRECHECK === 'true';
+  const resolveImpl = skipDnsPrecheck ? async () => ({ ok: true, addresses: [] }) : undefined;
+  const result = await proxyFetch(checked.url, k, consumed.host, {
+    selfHosts: selfHosts(requestUrl, env),
+    permit,
+    resolveImpl,
+  });
   if (k === 'robots') {
     let policy = robotsPolicyFor(result);
     let rules = [];

@@ -1,4 +1,4 @@
-import { html, raw, safeHref } from './html.js';
+import { html, safeHref } from './html.js';
 import { SOURCES } from './sources.js';
 import { VERSION } from './version.js';
 
@@ -59,6 +59,7 @@ const SITEMAP_KIND_TEXT = Object.freeze({
   index: 'sitemap 索引',
   invalid: '格式無效',
   html: 'HTML 頁面',
+  missing: '未找到',
   gzip: '壓縮檔，無法驗證',
   error: '讀取失敗',
   robots_disallowed: 'robots.txt 宣告禁止讀取',
@@ -79,10 +80,10 @@ function clip(value, length = 300) {
 }
 function link(url, label = null) {
   const href = safeHref(url);
-  return href ? raw(html`<a href="${href}" target="_blank" rel="noopener noreferrer nofollow">${clip(label ?? href)}</a>`) : clip(label ?? url);
+  return href ? html`<a href="${href}" target="_blank" rel="noopener noreferrer nofollow">${clip(label ?? href)}</a>` : clip(label ?? url);
 }
 function list(items, className = '') {
-  return raw(html`<ul class="${className}">${items.map(item=>raw(html`<li>${item}</li>`))}</ul>`);
+  return html`<ul class="${className}">${items.map(item=>html`<li>${item}</li>`)}</ul>`;
 }
 function sourceLinks(ids = []) {
   const links = ids.map(id=>SOURCES?.[id]).filter(Boolean).map(s=>link(s.url,s.title));
@@ -96,40 +97,40 @@ function resultText(value) {
 function card(finding, detail) {
   const shown = (finding.urls || []).slice(0, detail ? 50 : 5);
   const omitted = Math.max(0, (finding.count || 0) - shown.length);
-  return raw(html`<article class="finding-card severity-${finding.severity.toLowerCase()}">
+  return html`<article class="finding-card severity-${finding.severity.toLowerCase()}">
     <div class="finding-meta"><span class="badge">${SEVERITY[finding.severity]}</span><span class="badge evidence">${EVIDENCE[finding.evidence]}</span><span class="case-id">${finding.id}</span></div>
     <h3>${finding.title}</h3><p>${finding.summary}</p>
-    ${finding.why ? raw(html`<h4>為什麼重要</h4><p>${finding.why}</p>`) : ''}
-    ${finding.fix ? raw(html`<h4>建議修正</h4><p>${finding.fix}</p>`) : ''}
-    ${shown.length ? raw(html`<h4>受影響網址</h4>${list(shown.map(u=>link(u)))}`) : ''}
-    ${omitted ? raw(html`<p class="muted">另有 ${omitted} 筆</p>`) : ''}
-    ${finding.sources?.length ? raw(html`<h4>依據</h4>${sourceLinks(finding.sources)}`) : ''}
-  </article>`);
+    ${finding.why ? html`<h4>為什麼重要</h4><p>${finding.why}</p>` : ''}
+    ${finding.fix ? html`<h4>建議修正</h4><p>${finding.fix}</p>` : ''}
+    ${shown.length ? html`<h4>受影響網址</h4>${list(shown.map(u=>link(u)))}` : ''}
+    ${omitted ? html`<p class="muted">另有 ${omitted} 筆</p>` : ''}
+    ${finding.sources?.length ? html`<h4>依據</h4>${sourceLinks(finding.sources)}` : ''}
+  </article>`;
 }
 function botTable(rows) {
   const groups = Object.keys(CATEGORIES).map(category => {
-    const body = rows.filter(r=>r.category===category).map(r=>raw(html`<tr><td>${r.token}</td><td>${r.company}</td><td>${r.status==='declared_allowed'?'✅ 規則允許':r.status==='declared_disallowed'?'⛔ 規則封鎖':'❔ 無法判斷'}</td><td>${r.blockedUrls?.length || 0}</td><td>${r.purpose}</td></tr>`));
+    const body = rows.filter(r=>r.category===category).map(r=>html`<tr><td>${r.token}</td><td>${r.company}</td><td>${r.status==='declared_allowed'?'✅ 規則允許':r.status==='declared_disallowed'?'⛔ 規則封鎖':'❔ 無法判斷'}</td><td>${r.blockedUrls?.length || 0}</td><td>${r.purpose}</td></tr>`);
     if (!body.length) return '';
-    const note = category==='user_fetch' ? raw(html`<p class="muted">${'這類爬蟲實際是否遵守 robots.txt 由各服務決定'}</p>`) : '';
-    return raw(html`<section class="bot-group"><h3>${CATEGORIES[category]}</h3>${note}<div class="table-wrap"><table><thead><tr><th>爬蟲</th><th>公司</th><th>首頁規則</th><th>已檢查頁面被封鎖數</th><th>用途</th></tr></thead><tbody>${body}</tbody></table></div></section>`);
+    const note = category==='user_fetch' ? html`<p class="muted">${'這類爬蟲實際是否遵守 robots.txt 由各服務決定'}</p>` : '';
+    return html`<section class="bot-group"><h3>${CATEGORIES[category]}</h3>${note}<div class="table-wrap"><table><thead><tr><th>爬蟲</th><th>公司</th><th>首頁規則</th><th>已檢查頁面被封鎖數</th><th>用途</th></tr></thead><tbody>${body}</tbody></table></div></section>`;
   });
   return groups;
 }
 function detailedAppendix(snapshot) {
-  const pageRows=(snapshot.pages||[]).map(p=>raw(html`<tr><td>${link(p.finalUrl||p.url)}</td><td>${p.status ?? '—'}</td><td>${resultText(p.error) || resultText(p.stop) || (p.isHtml?'HTML':'非 HTML')}</td><td>${clip(p.page?.title || '—')}</td></tr>`));
+  const pageRows=(snapshot.pages||[]).map(p=>html`<tr><td>${link(p.finalUrl||p.url)}</td><td>${p.status ?? '—'}</td><td>${resultText(p.error) || resultText(p.stop) || (p.isHtml?'HTML':'非 HTML')}</td><td>${clip(p.page?.title || '—')}</td></tr>`);
   const robotLines=String(snapshot.robots?.text||'').split(/\r\n|\n|\r/).slice(0,200).map(line=>clip(line,300)).join('\n');
-  const mapRows=(snapshot.sitemaps||[]).map(s=>raw(html`<tr><td>${link(s.url)}</td><td>${s.status ?? '—'}</td><td>${SITEMAP_KIND_TEXT[s.kind] || '無法判斷'}</td><td>${s.urlCount ?? 0}</td></tr>`));
+  const mapRows=(snapshot.sitemaps||[]).map(s=>html`<tr><td>${link(s.url)}</td><td>${s.status ?? '—'}</td><td>${SITEMAP_KIND_TEXT[s.kind] || '無法判斷'}</td><td>${s.urlCount ?? 0}</td></tr>`);
   const uncrawled=Object.entries(snapshot.discovered||{}).filter(([,v])=>!v.crawled).map(([u])=>link(u));
-  return raw(html`<section><h2>已檢查頁面</h2><div class="table-wrap"><table><thead><tr><th>網址</th><th>狀態</th><th>結果</th><th>標題</th></tr></thead><tbody>${pageRows}</tbody></table></div></section>
+  return html`<section><h2>已檢查頁面</h2><div class="table-wrap"><table><thead><tr><th>網址</th><th>狀態</th><th>結果</th><th>標題</th></tr></thead><tbody>${pageRows}</tbody></table></div></section>
   <section><h2>robots.txt 原文</h2><pre>${robotLines}</pre></section>
   <section><h2>sitemap 摘要</h2><div class="table-wrap"><table><thead><tr><th>網址</th><th>狀態</th><th>類型</th><th>網址數</th></tr></thead><tbody>${mapRows}</tbody></table></div></section>
-  <section><h2>未抓取清單</h2>${uncrawled.length?list(uncrawled):raw(html`<p>${'沒有未抓取項目。'}</p>`)}</section>`);
+  <section><h2>未抓取清單</h2>${uncrawled.length?list(uncrawled):html`<p>${'沒有未抓取項目。'}</p>`}</section>`;
 }
 
 export function renderReport(snapshot, findings, scoreObj, botRows, { detail=false, contactUrl=null }={}) {
   const time = String(snapshot?.scannedAt || '').replace('T',' ').slice(0,16);
   const scoreLabel = scoreObj.scoreStatus==='unavailable' ? '無法評分' : scoreObj.scoreStatus==='sample_only' ? '樣本分數' : '分數';
-  const sectionSummary = Object.keys(SECTIONS).map(key=>raw(html`<div class="summary-tile"><strong>${SECTIONS[key]}</strong><span>${findings.filter(f=>f.section===key&&f.scored).length} 個計分問題</span></div>`));
+  const sectionSummary = Object.keys(SECTIONS).map(key=>html`<div class="summary-tile"><strong>${SECTIONS[key]}</strong><span>${findings.filter(f=>f.section===key&&f.scored).length} 個計分問題</span></div>`);
   const priorities=findings.filter(f=>['P0','P1','P2'].includes(f.severity));
   const small=findings.filter(f=>f.severity==='P3');
   const info=findings.filter(f=>f.severity==='INFO');
@@ -138,19 +139,19 @@ export function renderReport(snapshot, findings, scoreObj, botRows, { detail=fal
   const reasonMessages = [...new Set((snapshot.coverage?.reasons || [])
     .map((reason) => COVERAGE_REASON_TEXT[reason] || '本次有無法完整判斷的項目'))];
   const unavailableReasons = reasonMessages.join('；') || '首頁或 robots.txt 無法可靠讀取';
-  return html`<div class="report grade-${scoreObj.grade}">
+  return String(html`<div class="report grade-${scoreObj.grade}">
     <header class="report-header"><h1>${'金水智連科技｜SEO／GEO 網站健檢（線上簡易版）'}</h1><dl><div><dt>網站</dt><dd>${link(snapshot.home||snapshot.startUrl)}</dd></div><div><dt>檢查時間</dt><dd>${time}</dd></div><div><dt>檢查頁數</dt><dd>${snapshot.limits?.crawled ?? snapshot.pages?.length ?? 0}／15</dd></div></dl></header>
-    <section class="score-panel"><div><p>${scoreLabel}</p><strong>${scoreObj.score ?? '—'}</strong></div><div><h2>${GRADE_TEXT[scoreObj.grade]}</h2>${scoreObj.scoreStatus==='sample_only'?raw(html`<p>${'本次只檢查部分頁面'}</p>`):''}${scoreObj.scoreStatus==='unavailable'?raw(html`<p>${unavailableReasons}</p>`):''}${scoreObj.capped?raw(html`<p>${scoreObj.counts.P0?'因為有阻斷級問題，分數上限為 40 分':'因為有高風險問題，分數上限為 79 分'}</p>`):''}<p>P0 ${scoreObj.counts.P0}　P1 ${scoreObj.counts.P1}　P2 ${scoreObj.counts.P2}　P3 ${scoreObj.counts.P3}</p></div></section>
+    <section class="score-panel"><div><p>${scoreLabel}</p><strong>${scoreObj.score ?? '—'}</strong></div><div><h2>${GRADE_TEXT[scoreObj.grade]}</h2>${scoreObj.scoreStatus==='sample_only'?html`<p>${'本次只檢查部分頁面'}</p>`:''}${scoreObj.scoreStatus==='unavailable'?html`<p>${unavailableReasons}</p>`:''}${scoreObj.capped?html`<p>${scoreObj.counts.P0?'因為有阻斷級問題，分數上限為 40 分':'因為有高風險問題，分數上限為 79 分'}</p>`:''}<p>P0 ${scoreObj.counts.P0}　P1 ${scoreObj.counts.P1}　P2 ${scoreObj.counts.P2}　P3 ${scoreObj.counts.P3}</p></div></section>
     <section><h2>三區塊摘要</h2><div class="summary-grid">${sectionSummary}</div></section>
     <section><h2>robots.txt 對各爬蟲的規則</h2>${botTable(botRows||[])}</section>
-    <section><h2>優先處理</h2>${priorities.length?priorities.map(f=>card(f,detail)):raw(html`<p class="empty-state">${'本次樣本沒有發現 P0–P2 問題。'}</p>`)}</section>
-    <section><h2>小建議</h2>${small.length?(detail?small.map(f=>card(f,true)):list(small.map(f=>`${f.title}（${f.count}）`))):raw(html`<p>${'沒有低風險建議。'}</p>`)}</section>
-    <section><h2>資訊</h2>${detail?info.map(f=>card(f,true)):raw(html`<p>${info.length} 項資訊</p>`)}</section>
+    <section><h2>優先處理</h2>${priorities.length?priorities.map(f=>card(f,detail)):html`<p class="empty-state">${'本次樣本沒有發現 P0–P2 問題。'}</p>`}</section>
+    <section><h2>小建議</h2>${small.length?(detail?small.map(f=>card(f,true)):list(small.map(f=>`${f.title}（${f.count}）`))):html`<p>${'沒有低風險建議。'}</p>`}</section>
+    <section><h2>資訊</h2>${detail?info.map(f=>card(f,true)):html`<p>${info.length} 項資訊</p>`}</section>
     ${detail?detailedAppendix(snapshot):''}
     <section class="notice"><h2>關於 llms.txt</h2><p>${LLMS}</p></section>
     <section><h2>能證明／不能證明</h2><h3>能證明</h3><p>${CAN_PROVE}</p><h3>不能證明</h3><p>${CANNOT_PROVE}</p></section>
     <section><h2>檢查範圍與限制</h2>${list(LIMIT_TEXT)}</section>
-    <section class="cta"><h2>需要完整健檢、修正與上線後追蹤？</h2>${contact?raw(html`<a class="button" href="${contact}" target="_blank" rel="noopener noreferrer nofollow">加入 LINE 官方帳號諮詢</a>`):''}</section>
+    <section class="cta"><h2>需要完整健檢、修正與上線後追蹤？</h2>${contact?html`<a class="button" href="${contact}" target="_blank" rel="noopener noreferrer nofollow">加入 LINE 官方帳號諮詢</a>`:''}</section>
     <footer>本報告由金水智連科技 SEO／GEO 線上健檢產生　${time}　v${VERSION}</footer>
-  </div>`;
+  </div>`);
 }

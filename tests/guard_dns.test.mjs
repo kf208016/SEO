@@ -290,3 +290,23 @@ test('W03 proxyFetch maps resolvePublic "aborted" to error "timeout"', async () 
   assert.equal(bytes, null);
   assert.equal(fetched, 0);
 });
+
+// ------------------------------------------------------------------ mutation gaps GD07, DN05
+test('GD07 checkTarget: password without username -> credentials', () => {
+  const r = checkTarget('https://:p@a.com/');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'credentials');
+  assert.equal(checkTarget('https://u@a.com/').reason, 'credentials');
+});
+
+test('DN05 resolvePublic: A Status 3 but AAAA Status 0 with a public address -> ok (not nxdomain)', async () => {
+  const f = doh({ A: { Status: 3 }, AAAA: { Status: 0, Answer: [{ type: 28, data: '2606:4700::1111' }] } });
+  const r = await resolvePublic('a.com', { fetchImpl: f.fetchImpl });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.addresses, ['2606:4700::1111']);
+  // only one side NXDOMAIN and no address at all -> no_address, still not nxdomain
+  const g = doh({ A: { Status: 3 }, AAAA: { Status: 0 } });
+  assert.equal((await resolvePublic('a.com', { fetchImpl: g.fetchImpl })).reason, 'no_address');
+  const h = doh({ A: { Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] }, AAAA: { Status: 3 } });
+  assert.equal((await resolvePublic('a.com', { fetchImpl: h.fetchImpl })).ok, true);
+});

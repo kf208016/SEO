@@ -466,8 +466,8 @@ export async function runAudit(startUrl, {
     let parsed = null;
     let error = result.error;
     if (result.stop === 'robots_disallowed') kind = 'robots_disallowed';
-    else if ((result.status === 404 || result.status === 410) && !result.error && !result.accessBlocked) {
-      kind = 'invalid';
+    else if (fallback && (result.status === 404 || result.status === 410) && !result.error && !result.accessBlocked) {
+      kind = 'missing';
       error = null;
     } else if (result.status === 200 && result.bytes != null && !result.error && !result.accessBlocked && !result.truncated) {
       const text = decodeBody(result.bytes, contentType(result));
@@ -552,7 +552,7 @@ export async function runAudit(startUrl, {
     if (entry.status === 429 || entry.status === 503) reasons.add('fetch_errors');
     if (entry.accessBlocked) reasons.add('access_blocked');
     if (entry.truncated) reasons.add('truncated');
-    if (entry.status === 200 && (!entry.isHtml || !entry.page)) reasons.add('page_unanalyzable');
+    if (entry.status === 200 && !entry.duplicateOf && (!entry.isHtml || !entry.page)) reasons.add('page_unanalyzable');
     if (entry.page?.limitsHit?.length) reasons.add('parse_limit');
     if (entry.error === 'proxy_budget_exhausted') break;
     if (!entry.page || entry.duplicateOf || entry.stop) continue;

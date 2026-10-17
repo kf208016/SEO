@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { parseHTML } from 'linkedom';
 import { computeScore } from '../public/core/score.js';
 import { escapeHtml, html, raw, safeHref } from '../public/core/html.js';
@@ -42,7 +43,7 @@ function page(overrides={}) {
   return {url:'https://a.com/',finalUrl:'https://a.com/',status:200,chain:[],stop:null,headers:{},error:null,accessBlocked:false,truncated:false,truncatedHeaders:false,isHtml:true,duplicateOf:null,depth:0,page:{title:'正常標題',titleCount:1,metaDescription:'正常摘要',metaRobots:[],metaBingbot:[],canonicals:['https://a.com/'],canonicalTagCount:1,h1:'標題',lang:'zh-Hant',hasViewport:true,og:{title:'正常標題',description:'正常摘要',image:'https://a.com/a.jpg',url:'https://a.com/'},jsonld:[{ok:true,types:['Organization'],error:null}],links:[],images:[],insecureResources:[],textLength:500,textHash:'x',scriptCount:0,scriptSrcCount:0,hasSpaRoot:false,spaRootTextLength:null,dataNosnippetCount:0,metaRefresh:null,limitsHit:[]},...overrides};
 }
 function snapshot(overrides={}) {
-  const home=page();return {version:'1.4.0',startUrl:'https://a.com/',siteHost:'a.com',origin:'https://a.com',home:'https://a.com/',scannedAt:'2026-10-17T12:00:00+08:00',robots:{url:'https://a.com/robots.txt',origin:'https://a.com',status:200,policy:'parse',ourPolicy:{policy:'allow_all',rulesCount:0},error:null,accessBlocked:false,truncated:false,stop:null,chain:[],headers:{},skipped:null,text:'User-agent: *\nAllow: /',parsed:parseRobots('User-agent: *\nAllow: /')},robotsInitial:null,sitemaps:[],sitemapUrls:[],pages:[home],discovered:{'https://a.com/':{inlinks:[],fromSitemap:false,crawled:true}},probes:{soft404:{url:'https://a.com/random',status:404,location:null,error:null,accessBlocked:false},http:{url:'http://a.com/',status:301,location:'https://a.com/',error:null,accessBlocked:false}},homeAnalyzable:true,homeSkippedByRobots:false,stoppedOffsite:false,coverage:coverage(),limits:{maxPages:15,crawled:1,requests:1,skippedByRobots:0,notCrawled:0,timedOut:false},...overrides};
+  const home=page();return {version:'1.5.0',startUrl:'https://a.com/',siteHost:'a.com',origin:'https://a.com',home:'https://a.com/',scannedAt:'2026-10-17T12:00:00+08:00',robots:{url:'https://a.com/robots.txt',origin:'https://a.com',status:200,policy:'parse',ourPolicy:{policy:'allow_all',rulesCount:0},error:null,accessBlocked:false,truncated:false,stop:null,chain:[],headers:{},skipped:null,text:'User-agent: *\nAllow: /',parsed:parseRobots('User-agent: *\nAllow: /')},robotsInitial:null,sitemaps:[],sitemapUrls:[],pages:[home],discovered:{'https://a.com/':{inlinks:[],fromSitemap:false,crawled:true}},probes:{soft404:{url:'https://a.com/random',status:404,location:null,error:null,accessBlocked:false},http:{url:'http://a.com/',status:301,location:'https://a.com/',error:null,accessBlocked:false}},homeAnalyzable:true,homeSkippedByRobots:false,stoppedOffsite:false,coverage:coverage(),limits:{maxPages:15,crawled:1,requests:1,skippedByRobots:0,notCrawled:0,timedOut:false},...overrides};
 }
 
 test('S12 報告將惡意動態值當文字且不產生可執行標記',()=>{
@@ -71,5 +72,73 @@ test('G01 botAccess 依 robots.txt 宣告判斷 AI 搜尋爬蟲',()=>{
   const text='User-agent: OAI-SearchBot\nDisallow: /\nUser-agent: *\nAllow: /';const s=snapshot();s.robots.text=text;s.robots.parsed=parseRobots(text);const rows=botAccess(s);assert.equal(rows.find(r=>r.token==='OAI-SearchBot').status,'declared_disallowed');assert.ok(runChecks(s).some(f=>f.id==='G01'));
 });
 test('H01 html 工具跳脫插值、只允許安全網址',()=>{
-  assert.equal(escapeHtml(`<>&"'`),'&lt;&gt;&amp;&quot;&#39;');assert.equal(html`<p>${'<b>x</b>'}</p>`,'<p>&lt;b&gt;x&lt;/b&gt;</p>');assert.equal(html`<p>${raw('<b>x</b>')}</p>`,'<p><b>x</b></p>');assert.equal(safeHref('javascript:alert(1)'),null);assert.equal(safeHref('https://u:p@a.com/'),null);assert.equal(safeHref('https://a.com/x'),'https://a.com/x');
+  assert.equal(escapeHtml(`<>&"'`),'&lt;&gt;&amp;&quot;&#39;');assert.equal(String(html`<p>${'<b>x</b>'}</p>`),'<p>&lt;b&gt;x&lt;/b&gt;</p>');assert.equal(String(html`<p>${raw('<b>x</b>')}</p>`),'<p><b>x</b></p>');assert.equal(safeHref('javascript:alert(1)'),null);assert.equal(safeHref('https://u:p@a.com/'),null);assert.equal(safeHref('https://a.com/x'),'https://a.com/x');
+});
+
+test('A5 finalUrl 命中不繼承請求網址的 chain，但 request URL 命中會判定轉址',()=>{
+  const requested='https://a.com/';
+  const finalUrl='https://www.a.com/';
+  const redirected=page({
+    url:requested,
+    finalUrl,
+    chain:[{url:requested,status:301,location:finalUrl}],
+  });
+  redirected.page={...redirected.page,canonicals:[finalUrl]};
+  let s=snapshot({
+    home:finalUrl,
+    origin:'https://www.a.com',
+    pages:[redirected],
+    sitemapUrls:[finalUrl],
+    discovered:{[requested]:{inlinks:[],fromSitemap:false,crawled:true}},
+  });
+  let ids=new Set(runChecks(s).map((finding)=>finding.id));
+  assert.equal(ids.has('T17'),false);
+  assert.equal(ids.has('T20'),false);
+
+  redirected.page={...redirected.page,canonicals:[requested]};
+  s={...s,sitemapUrls:[requested]};
+  const findings=runChecks(s);
+  ids=new Set(findings.map((finding)=>finding.id));
+  assert.ok(ids.has('T17'));
+  assert.ok(ids.has('T20'));
+  assert.deepEqual(findings.find((finding)=>finding.id==='T20').urls,[requested]);
+});
+
+test('A5 lookupTarget 對 404/noindex 觸發，對 error、accessBlocked 與未抓目標不觸發',()=>{
+  const sourceUrl='https://a.com/source';
+  const targetUrl='https://a.com/target';
+  function findingsFor(target) {
+    const source=page({url:sourceUrl,finalUrl:sourceUrl});
+    source.page={...source.page,canonicals:[targetUrl]};
+    return runChecks(snapshot({
+      home:sourceUrl,
+      pages:target?[source,target]:[source],
+      sitemapUrls:[targetUrl],
+      discovered:{[sourceUrl]:{inlinks:[],fromSitemap:false,crawled:true}},
+    }));
+  }
+  function hasBoth(target) {
+    const ids=new Set(findingsFor(target).map((finding)=>finding.id));
+    return ids.has('T17')&&ids.has('T20');
+  }
+  assert.equal(hasBoth(page({url:targetUrl,finalUrl:targetUrl,status:404,isHtml:false,page:null})),true);
+  const noindex=page({url:targetUrl,finalUrl:targetUrl});
+  noindex.page={...noindex.page,metaRobots:['noindex']};
+  assert.equal(hasBoth(noindex),true);
+  assert.equal(hasBoth(page({url:targetUrl,finalUrl:targetUrl,status:404,isHtml:false,page:null,error:'network'})),false);
+  assert.equal(hasBoth(page({url:targetUrl,finalUrl:targetUrl,status:404,isHtml:false,page:null,accessBlocked:true})),false);
+  assert.equal(hasBoth(null),false);
+});
+
+test('A8 html 回傳可巢狀 SafeHtml，renderReport 則回傳 plain string',async()=>{
+  const child=html`<strong>${'<unsafe>'}</strong>`;
+  const rendered=html`<div>${child}${[html`<i>safe</i>`,'<b>escaped</b>']}</div>`;
+  assert.equal(typeof rendered,'object');
+  assert.equal(String(rendered),'<div><strong>&lt;unsafe&gt;</strong><i>safe</i>&lt;b&gt;escaped&lt;/b&gt;</div>');
+  assert.throws(()=>raw(child),TypeError);
+  const report=renderReport(snapshot(),[],computeScore([],coverage()),[]);
+  assert.equal(typeof report,'string');
+  assert.match(report,/class="report grade-green"/u);
+  const source=await readFile(new URL('../public/core/report.js',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\braw\s*\(\s*html\s*`/u);
 });

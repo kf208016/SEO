@@ -1,9 +1,10 @@
 import { BOTS } from './bots.js';
 import { explain, isAllowed } from './robots.js';
 import { normText } from './parse.js';
-import { pathAndQuery, stripWww } from './url.js';
+import { cleanUrl, pathAndQuery, stripWww } from './url.js';
 
 const BAD_STATUSES = new Set([404, 410, 500, 501, 502, 504]);
+const REDIRECT_RELATED_STOPS = new Set(['offsite', 'bad_redirect', 'loop', 'max_hops', 'location_too_long']);
 const SEVERITY_ORDER = { P0: 0, P1: 1, P2: 2, P3: 3, INFO: 4 };
 const GENERIC = Object.freeze({
   T01: ['首頁無法正常讀取', '首頁回應錯誤或陷入轉址循環。'],
@@ -168,6 +169,28 @@ export function runChecks(snapshot) {
     findings.push({ id, code, section, severity, evidence, title, summary, why, fix, urls: unique(urls).slice(0, 50), count: count ?? unique(urls).length, data, sources: SOURCES[id] || [], scored: severity !== 'INFO' });
   };
 
+  function lookupTarget(rawUrl) {
+    const url = cleanUrl(rawUrl);
+    if (!url) return null;
+    const classify = (entry) => {
+      let issue = null;
+      if (!entry.error && !entry.accessBlocked) {
+        if ([404, 410].includes(entry.status)) issue = 'not_found';
+        else if (analyzable(entry) && isNoindex(entry)) issue = 'noindex';
+      }
+      return { entry, issue };
+    };
+    const requested = pages.find((entry) => entry?.url === url);
+    if (requested) {
+      if ((requested.chain?.length || 0) > 0 || REDIRECT_RELATED_STOPS.has(requested.stop)) {
+        return { entry: requested, issue: 'redirect' };
+      }
+      return classify(requested);
+    }
+    const final = pages.find((entry) => entry?.finalUrl === url);
+    return final ? classify(final) : null;
+  }
+
   if (home && ((!home.accessBlocked && BAD_STATUSES.has(home.status)) || ['loop','max_hops'].includes(home.stop))) add('T01','home_unreachable','tech','P0','verified',[pageUrl(home)]);
   const badRobots = [snapshot?.robots, snapshot?.robotsInitial].filter(r => r && !r.error && !r.accessBlocked && (r.status === 429 || (r.status >= 500 && r.status <= 599)));
   if (badRobots.length) add('T02','robots_server_error','tech','P0','verified',badRobots.map(r=>r.url),{ status:badRobots[0].status },1);
@@ -216,19 +239,23 @@ export function runChecks(snapshot) {
   if (multipleCanon.length) add('T15','canonical_multiple','tech','P1','verified',multipleCanon.map(pageUrl));
   const crossCanon = indexablePages.filter(p => p.page.canonicals?.length===1 && (()=>{try{return stripWww(new URL(p.page.canonicals[0]).hostname)!==snapshot.siteHost}catch{return false}})());
   if (crossCanon.length) add('T16','canonical_cross_domain','tech',crossCanon.includes(home)?'P1':'P2','verified',crossCanon.map(pageUrl),{},null,null,'將 canonical 改為本站的主要網址。如果是刻意設定（例如內容聯播），可以忽略這一項。');
-  const pageMap = new Map(pages.flatMap(p=>[[p.url,p],[pageUrl(p),p]]));
-  const canonBad = indexablePages.filter(p=>p.page.canonicals?.length===1 && (()=>{const t=pageMap.get(p.page.canonicals[0]); return t && (analyzable(t)||[404,410].includes(t.status)) && (t.status!==200 || (t.chain?.length||0)>0 || isNoindex(t));})());
+  const canonBad = indexablePages.filter(p=>p.page.canonicals?.length===1 && lookupTarget(p.page.canonicals[0])?.issue);
   if (canonBad.length) add('T17','canonical_to_bad','tech','P2','verified',canonBad.map(pageUrl));
 
   const sitemaps = snapshot.sitemaps || [];
   const declaredMaps = sitemaps.filter(s=>s.fallback===false);
-  const fallbackConclusive = sitemaps.filter(s=>s.fallback===true && !s.error && !s.accessBlocked && !s.truncated && !['error','gzip','robots_disallowed'].includes(s.kind) && ([404,410].includes(s.status)||(s.status===200&&['html','invalid'].includes(s.kind))));
+  const fallbackConclusive = sitemaps.filter(s=>s.fallback===true && !s.error && !s.accessBlocked && !s.truncated && (s.kind==='missing'||(s.status===200&&['html','invalid'].includes(s.kind))));
   if (!declaredMaps.length && fallbackConclusive.length) add('T18','sitemap_missing','tech','INFO','verified',fallbackConclusive.map(s=>s.url),{},fallbackConclusive.length,FIXED.T18);
   const invalidMaps = declaredMaps.filter(s=>['invalid','html'].includes(s.kind));
   if (invalidMaps.length) add('T19','sitemap_invalid','tech','P2','verified',invalidMaps.map(s=>s.url),{},invalidMaps.length);
-  const sitemapSet = new Set(snapshot.sitemapUrls || []);
-  const badMapUrls = pages.filter(p=>sitemapSet.has(p.url)||sitemapSet.has(pageUrl(p))).filter(p=>(analyzable(p)||[404,410].includes(p.status)) && (p.status!==200||(p.chain?.length||0)>0||isNoindex(p)||robotsBlocks(snapshot,'googlebot',pageUrl(p))||(p.page?.canonicals?.length===1&&p.page.canonicals[0]!==pageUrl(p))));
-  if (badMapUrls.length) add('T20','sitemap_bad_urls','tech','P2','verified',badMapUrls.map(pageUrl));
+  const badMapUrls = unique((snapshot.sitemapUrls || []).map((url) => cleanUrl(url))).filter((url) => {
+    const target = lookupTarget(url);
+    if (target?.issue || robotsBlocks(snapshot, 'googlebot', url)) return true;
+    const entry = target?.entry;
+    return Boolean(entry && analyzable(entry) && entry.page.canonicals?.length === 1
+      && cleanUrl(entry.page.canonicals[0]) !== url);
+  });
+  if (badMapUrls.length) add('T20','sitemap_bad_urls','tech','P2','verified',badMapUrls);
   const foreign = (snapshot.sitemapUrls||[]).filter(u=>{try{return stripWww(new URL(u).hostname)!==snapshot.siteHost}catch{return false}});
   if (foreign.length) add('T21','sitemap_foreign_host','tech','P3','unverifiable',foreign,{},foreign.length);
   const unverifiableMaps=sitemaps.filter(s=>['gzip','error','robots_disallowed'].includes(s.kind)||s.truncated||s.accessBlocked);

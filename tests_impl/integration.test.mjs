@@ -141,7 +141,7 @@ test('S07 fallback sitemap 不可驗證時 T18 與 T37 嚴格互斥', () => {
     pages: [],
     robots: null,
     sitemaps: [{
-      url: 'https://example.com/sitemap.xml', fallback: true, status: 404,
+      url: 'https://example.com/sitemap.xml', fallback: true, status: 503,
       kind: 'error', error: null, accessBlocked: false, truncated: false,
     }],
     sitemapUrls: [],

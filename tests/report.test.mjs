@@ -205,7 +205,7 @@ test('renderReport signature: default options produce a string', async () => {
 });
 
 // ------------------------------------------------------------------ html.js
-// AMBIGUOUS: html`` may return a SafeHtml object; it is assumed to stringify (toString) to its HTML.
+// v1.5: html`` returns a SafeHtml object whose toString() is the HTML (see A8 test below).
 const frag = (s) => new DOMParser().parseFromString(`<!doctype html><html><body>${String(s)}</body></html>`, 'text/html');
 
 test('escapeHtml escapes & < > " \'', () => {
@@ -241,5 +241,20 @@ test('safeHref: only http/https without credentials, normalised', () => {
   assert.equal(safeHref('http://a.com/x y'), 'http://a.com/x%20y');
   for (const bad of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,<script>', 'ftp://a.com/', 'https://u:p@a.com/', 'https://u@a.com/', '//evil.com/', 'not a url', '', null, undefined]) {
     assert.equal(safeHref(bad), null, String(bad));
+  }
+});
+
+// ------------------------------------------------------------------ v1.5 A8: html returns SafeHtml, renderReport returns a string
+test('A8 html returns a SafeHtml object whose String() is the HTML; nesting needs no raw(); renderReport returns a string', async () => {
+  const h = html`<p>${'x'}</p>`;
+  assert.equal(typeof h, 'object');
+  assert.notEqual(h, null);
+  assert.equal(String(h), '<p>x</p>');
+  assert.equal(String(html`<div>${html`<b>${'<i>'}</b>`}</div>`), '<div><b>&lt;i&gt;</b></div>');
+  assert.equal(String(html`<ul>${['a', '<b>'].map((x) => html`<li>${x}</li>`)}</ul>`), '<ul><li>a</li><li>&lt;b&gt;</li></ul>');
+  const r = await result('s01');
+  for (const opts of [undefined, { detail: true, contactUrl: CONTACT }]) {
+    const out = opts ? renderReport(r.snapshot, r.findings, r.score, r.bots, opts) : renderReport(r.snapshot, r.findings, r.score, r.bots);
+    assert.equal(typeof out, 'string');
   }
 });

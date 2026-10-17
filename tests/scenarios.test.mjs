@@ -375,6 +375,7 @@ test('S17 robots only disallows KinsuiSEOCheck -> home not fetched, failed, no T
   assert.ok(!has(r, 'T03'));
   assert.equal(r.bots.find((b) => b.token === 'Googlebot').status, 'declared_allowed');
   assert.equal(r.snapshot.homeSkippedByRobots, true);
+  assert.ok(r.snapshot.coverage.reasons.includes('blocked_for_tool'), 'reason blocked_for_tool');
 });
 
 test('S18 start https://a.com/blog/post?utm=x -> pages[0] home, pages[1] start without query', async () => {
@@ -491,6 +492,246 @@ test('G07 home without Organization JSON-LD -> G07 INFO', async () => {
 test('crawl constants', () => {
   assert.deepEqual(CRAWL_LIMITS, { discovered: 5000, inlinksPerUrl: 50, maxHops: 5 });
   assert.deepEqual(SKIP_EXTENSIONS, ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.pdf', '.zip', '.rar', '.7z', '.mp4', '.mp3', '.mov', '.avi', '.css', '.js', '.json', '.xml', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.gz']);
+});
+
+// ------------------------------------------------------------------ v1.5 (DEBATE-001 驗收第一輪 A4–A6, A9, A10)
+test('A4 /%e6%9c%8d and /%E6%9C%8D are the same URL: crawled once, with upper-case hex', async () => {
+  const r = await go(S.percentCase);
+  const same = (u) => u.toLowerCase() === S.PCT_UPPER.toLowerCase();
+  const hits = r.site.requests.filter((q) => q.kind === 'page' && same(q.url));
+  assert.equal(hits.length, 1, 'one page request for the path');
+  assert.equal(hits[0].url, S.PCT_UPPER);
+  assert.ok(!r.site.requested(S.PCT_LOWER));
+  assert.equal(r.snapshot.pages.filter((p) => same(p.url)).length, 1);
+  assert.equal(Object.keys(r.snapshot.discovered).filter(same).length, 1);
+  assert.deepEqual(Object.keys(r.snapshot.discovered).filter(same), [S.PCT_UPPER]);
+  assert.ok(!has(r, 'C02'));
+  assert.equal(r.snapshot.limits.crawled, 9);
+});
+
+test('A5 home 301 -> www whose canonical is that final URL (also listed in the sitemap) -> no T17, no T20', async () => {
+  const r = await go(S.wwwHomeCanonical);
+  assert.equal(r.snapshot.home, 'https://www.a.com/');
+  assert.equal(r.snapshot.homeAnalyzable, true);
+  assert.ok(r.snapshot.sitemapUrls.includes('https://www.a.com/'));
+  assert.ok(!has(r, 'T17'), 'canonical to the final URL of a redirect is fine');
+  assert.ok(!has(r, 'T20'), 'sitemap URL equal to the final URL is fine');
+});
+
+test('A5 lookupTarget (T17): canonical to a URL that was requested and redirected / 404 / noindex -> T17; to a final URL -> no T17', async () => {
+  const r = await go(S.canonicalTargets);
+  assert.ok(has(r, 'T17'));
+  const urls = r.byId.T17.urls;
+  for (const p of ['/p', '/r', '/s']) assert.ok(urls.includes('https://a.com' + p), 'T17 ' + p);
+  assert.ok(!urls.includes('https://a.com/q'), '/q canonical is the final URL of /old (step 2 ignores the chain)');
+  assert.equal(r.byId.T17.severity, 'P2');
+});
+
+test('A5 lookupTarget (T20): sitemap URLs that redirect, 404, are noindex or canonicalise elsewhere -> T20; healthy ones not', async () => {
+  const r = await go(S.canonicalTargets);
+  assert.ok(has(r, 'T20'));
+  const urls = r.byId.T20.urls;
+  for (const p of ['/old', '/gone', '/noidx', '/p']) assert.ok(urls.includes('https://a.com' + p), 'T20 ' + p);
+  assert.ok(!urls.includes('https://a.com/'), 'home is healthy');
+});
+
+test('A6 a link redirecting to an already crawled page is a duplicate, not page_unanalyzable', async () => {
+  const r = await go(S.duplicateRedirect);
+  const dup = r.snapshot.pages.find((p) => p.url === 'https://a.com/dup');
+  assert.ok(dup, '/dup page entry');
+  assert.equal(dup.finalUrl, 'https://a.com/');
+  assert.notEqual(dup.duplicateOf, null);
+  assert.equal(dup.page, null);
+  assert.ok(!r.snapshot.coverage.reasons.includes('page_unanalyzable'));
+  assert.equal(r.snapshot.coverage.defects, false);
+  assert.equal(r.snapshot.coverage.status, 'complete');
+  assert.equal(r.score.grade, 'green');
+});
+
+test('A9 fallback /sitemap.xml 404 or 410 -> kind missing -> T18, no T37, no sitemap defect', async () => {
+  for (const b of [S.fallbackSitemapGone, S.fallbackSitemap410]) {
+    const r = await go(b);
+    const sm = r.snapshot.sitemaps.find((x) => x.url === 'https://a.com/sitemap.xml');
+    assert.ok(sm, 'fallback sitemap entry');
+    assert.equal(sm.kind, 'missing');
+    assert.equal(sm.fallback, true);
+    assert.ok(has(r, 'T18'));
+    assert.equal(r.byId.T18.count, 1);
+    assert.ok(!has(r, 'T37'));
+    assert.ok(!r.snapshot.coverage.reasons.includes('sitemap_unverifiable'));
+    assert.equal(r.snapshot.coverage.status, 'complete');
+  }
+});
+
+test('A9 a declared sitemap returning 404 -> kind error -> T37 (no T18, no T19)', async () => {
+  const r = await go(S.declaredSitemap404);
+  const sm = r.snapshot.sitemaps.find((x) => x.url === 'https://a.com/sm.xml');
+  assert.ok(sm);
+  assert.equal(sm.fallback, false);
+  assert.equal(sm.kind, 'error');
+  assert.ok(has(r, 'T37'));
+  assert.ok(!has(r, 'T18'));
+  assert.ok(!has(r, 'T19'));
+  assert.ok(r.snapshot.coverage.reasons.includes('sitemap_unverifiable'));
+  assert.ok(!r.site.requested('https://a.com/sitemap.xml'), 'no fallback when a sitemap is declared');
+});
+
+test('A10 home not analyzable -> no sitemap, page or probe request after the home request', async () => {
+  for (const [name, b, reason] of [
+    ['503', S.s20, 'home_unavailable'],
+    ['404', S.home404, 'home_not_analyzable'],
+    ['non-HTML', S.homeNotHtml, 'home_not_analyzable'],
+    ['500 challenge', S.homeChallenge500, 'home_not_analyzable'],
+  ]) {
+    const r = await go(b);
+    const idx = r.site.indexOf('https://a.com/', 'page');
+    assert.ok(idx >= 0, `${name}: home requested`);
+    const after = r.site.requests.slice(idx + 1).filter((q) => q.kind !== 'robots');
+    assert.deepEqual(after, [], `${name}: requests after the home page`);
+    assert.deepEqual(r.site.urls('page'), ['https://a.com/'], `${name}: only the home page`);
+    assert.equal(r.snapshot.homeAnalyzable, false);
+    assert.equal(r.snapshot.coverage.status, 'failed');
+    assert.ok(r.snapshot.coverage.reasons.includes(reason), `${name}: reason ${reason}`);
+  }
+});
+
+// ------------------------------------------------------------------ mutation gaps CK01–CK07, CR01
+test('CK01 home 500 with cf-mitigated: challenge -> no T01 (accessBlocked), T29', async () => {
+  const r = await go(S.homeChallenge500);
+  assert.equal(r.snapshot.pages[0].accessBlocked, true);
+  assert.ok(!has(r, 'T01'));
+  assert.ok(has(r, 'T29'));
+});
+
+test('CK02 robots 503 with cf-mitigated: challenge -> no T02 (accessBlocked), home not fetched', async () => {
+  const r = await go(S.robotsChallenge503);
+  assert.equal(r.snapshot.robots.accessBlocked, true);
+  assert.ok(!has(r, 'T02'));
+  assert.ok(has(r, 'T29'));
+  assert.ok(!r.site.requested('https://a.com/', 'page'));
+});
+
+test('CK03 linked page 502 with cf-mitigated: challenge is not counted in T12 (only the real 404 is)', async () => {
+  const r = await go(S.pageChallenge502);
+  assert.ok(has(r, 'T12'));
+  assert.ok(!r.byId.T12.urls.includes('https://a.com/bad'));
+  assert.ok(r.byId.T12.urls.includes('https://a.com/gone'));
+  assert.equal(r.byId.T12.count, 1);
+  assert.equal(r.byId.T12.severity, 'P2');
+  assert.ok(has(r, 'T13'));
+  assert.ok(r.byId.T13.urls.includes('https://a.com/bad'));
+});
+
+test('CK04 2 of 10 linked internal pages 404 -> T12 is P2 (P1 needs n >= 5 and >= 10%)', async () => {
+  const r = await go(S.tenLinksTwoBroken);
+  assert.ok(has(r, 'T12'));
+  assert.equal(r.byId.T12.severity, 'P2');
+  assert.equal(r.byId.T12.count, 2);
+  for (const p of S.CK04_BROKEN) assert.ok(r.byId.T12.urls.includes('https://a.com' + p), p);
+  assert.equal(r.snapshot.limits.crawled, 11);
+});
+
+test('CK07 SPA root holding 50 chars of text -> no G06 (control: 19 chars -> G06)', async () => {
+  const r50 = await go(S.ALL_SCENARIOS.spaRoot50);
+  const home = r50.snapshot.pages[0].page;
+  assert.equal(home.hasSpaRoot, true);
+  assert.equal(home.spaRootTextLength, 50);
+  assert.ok(home.textLength < 200);
+  assert.ok(home.scriptSrcCount >= 1);
+  assert.ok(!has(r50, 'G06'));
+  const r19 = await go(S.ALL_SCENARIOS.spaRoot19);
+  assert.equal(r19.snapshot.pages[0].page.spaRootTextLength, 19);
+  assert.ok(has(r19, 'G06'));
+});
+
+test('CR01 Worker ourPolicy unknown for the start origin -> only robots requested, even though the robots text allows all', async () => {
+  const r = await go(S.workerUnknownStart);
+  assert.equal(r.snapshot.robots.ourPolicy.policy, 'unknown');
+  assert.deepEqual(kinds(r.site), ['robots']);
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.deepEqual(r.site.violations, []);
+});
+
+test('CR01 Worker ourPolicy unknown for http://a.com -> no http probe (other origins unaffected)', async () => {
+  const r = await go(S.workerUnknownHttp);
+  assert.ok(r.site.requested('https://a.com/', 'page'));
+  assert.ok(r.site.requested('http://a.com/robots.txt', 'robots'));
+  assert.ok(!r.site.requests.some((q) => q.kind !== 'robots' && q.url.startsWith('http://')), 'nothing but robots on http://a.com');
+  assert.equal(r.snapshot.probes.http, null);
+  assert.deepEqual(r.site.violations, []);
+});
+
+test('CR01 robots overflow (Worker ourPolicy unknown) -> only robots requested', async () => {
+  const r = await go(S.workerUnknownOverflow);
+  assert.equal(r.snapshot.robots.ourPolicy.policy, 'unknown');
+  assert.deepEqual(kinds(r.site), ['robots']);
+  assert.equal(r.snapshot.coverage.status, 'failed');
+});
+
+// ------------------------------------------------------------------ coverage reasons (§5.7 steps 2 and 4)
+test('COV01 start-origin robots.txt 503 -> failed with robots_disallow_all (not blocked_for_tool), no page request', async () => {
+  const r = await go(S.s07);
+  assert.equal(r.snapshot.robots.ourPolicy.policy, 'disallow_all');
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.ok(r.snapshot.coverage.reasons.includes('robots_disallow_all'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('blocked_for_tool'));
+  assert.equal(r.snapshot.homeSkippedByRobots, false);
+  assert.deepEqual(r.site.urls('page'), []);
+});
+
+test('COV02 start-origin robots.txt 403 + cf-mitigated: challenge -> failed with robots_unknown (not blocked_for_tool)', async () => {
+  const r = await go(S.s14);
+  assert.equal(r.snapshot.robots.ourPolicy.policy, 'unknown');
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.ok(r.snapshot.coverage.reasons.includes('robots_unknown'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('blocked_for_tool'));
+  assert.equal(r.snapshot.homeSkippedByRobots, false);
+  assert.deepEqual(r.site.urls('page'), []);
+});
+
+test('COV03 robots disallows only KinsuiSEOCheck for / -> blocked_for_tool and homeSkippedByRobots (contrast with COV01/COV02)', async () => {
+  const r = await go(S.s17);
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.ok(r.snapshot.coverage.reasons.includes('blocked_for_tool'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.ok(!r.snapshot.coverage.reasons.includes('robots_unknown'));
+  assert.ok(!r.snapshot.coverage.reasons.includes('robots_disallow_all'));
+  assert.equal(r.snapshot.homeSkippedByRobots, true);
+  assert.deepEqual(r.site.urls('page'), []);
+});
+
+test('COV04 final-origin robots unknown after the home redirect -> robots_final_unknown; score unavailable, null, gray', async () => {
+  // AMBIGUOUS: §5.7 fetchFollow checks ourAllowed before every hop and returns finalUrl = the last REQUESTED URL,
+  // so https://a.com/ (unknown policy) is never requested and a literal reading keeps origin = https://www.a.com.
+  // Step 4 only makes sense if home/origin is the redirect target https://a.com/; this test follows step 4.
+  const r = await go(S.finalOriginRobotsUnknown);
+  assert.equal(r.snapshot.coverage.status, 'failed');
+  assert.ok(r.snapshot.coverage.reasons.includes('robots_final_unknown'), JSON.stringify(r.snapshot.coverage.reasons));
+  assert.equal(r.snapshot.origin, 'https://a.com');
+  assert.equal(r.snapshot.robots.origin, 'https://a.com');
+  assert.equal(r.snapshot.robots.ourPolicy.policy, 'unknown');
+  assert.ok(r.snapshot.robotsInitial);
+  assert.equal(r.snapshot.robotsInitial.origin, 'https://www.a.com');
+  assert.ok(!r.findings.some((f) => f.severity === 'P0'), 'no P0 finding expected here');
+  assert.equal(r.score.scoreStatus, 'unavailable');
+  assert.equal(r.score.score, null);
+  assert.equal(r.score.grade, 'gray');
+});
+
+test('COV05 final-origin robots unknown: no sitemap, page or probe request after the a.com robots request', async () => {
+  const r = await go(S.finalOriginRobotsUnknown);
+  assert.deepEqual(r.site.requests.slice(0, 3), [
+    { url: 'https://www.a.com/robots.txt', kind: 'robots' },
+    { url: 'https://www.a.com/', kind: 'page' },
+    { url: 'https://a.com/robots.txt', kind: 'robots' },
+  ]);
+  const idx = r.site.indexOf('https://a.com/robots.txt', 'robots');
+  const after = r.site.requests.slice(idx + 1).filter((q) => q.kind !== 'robots');
+  // the only page the coordinator's description tolerates here is the a.com home hop; §5.7 fetchFollow
+  // (ourAllowed before every hop) and the DO (policy unknown -> robots_disallowed) both forbid it
+  assert.ok(after.every((q) => q.kind === 'page' && q.url === 'https://a.com/'), 'nothing but the a.com home hop: ' + JSON.stringify(after));
+  assert.ok(!r.site.requested('https://a.com/', 'page'), 'https://a.com/ must not be requested: its ourPolicy is unknown (§5.7 fetchFollow, DO robots_disallowed)');
+  assert.ok(!r.site.requests.some((q) => q.kind === 'sitemap' || q.kind === 'probe'));
+  assert.deepEqual(r.site.violations, []);
 });
 
 // ------------------------------------------------------------------ invariants over every scenario

@@ -1,5 +1,5 @@
 // Scenario site builders for S01–S23 (SPEC-001 §12.4) and a few extra checks.
-import { createFakeSite, goodSiteRoutes, page, sitemapXml, GOOD_PATHS } from './fakesite.mjs';
+import { createFakeSite, goodSiteRoutes, page, sitemapXml, GOOD_PATHS, ORG_JSONLD } from './fakesite.mjs';
 
 const ALLOW_ROBOTS = 'User-agent: *\nDisallow:\n';
 const ALLOW_WITH_SITEMAP = 'User-agent: *\nDisallow:\n\nSitemap: https://a.com/sitemap.xml\n';
@@ -269,7 +269,177 @@ export function noOrgSchema() {
   return { site: createFakeSite({ routes: goodSiteRoutes({ overrides: { '/': { page: { jsonld: [] } } } }) }), start: START };
 }
 
+// ---------------------------------------------------------------- v1.5 (DEBATE-001 「驗收第一輪」 A1–A10)
+
+// A4: the same path linked with lower- and upper-case percent-encoding is one URL
+export const PCT_UPPER = 'https://a.com/%E6%9C%8D';
+export const PCT_LOWER = 'https://a.com/%e6%9c%8d';
+export function percentCase() {
+  const routes = goodSiteRoutes({
+    overrides: { '/': { page: { links: [...GOOD_PATHS.filter((p) => p !== '/'), '/%e6%9c%8d', '/%E6%9C%8D'] } } },
+  });
+  const svc = { html: page({ title: '金水範例公司｜服務據點', canonical: PCT_UPPER, links: ['/'] }) };
+  routes[PCT_UPPER] = svc;
+  routes[PCT_LOWER] = svc;
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// A5: home https://a.com/ 301 -> https://www.a.com/, whose canonical is itself; that URL is also in the sitemap
+export function wwwHomeCanonical() {
+  const routes = {
+    'https://a.com/robots.txt': { text: ALLOW_ROBOTS },
+    'https://a.com/': { status: 301, location: 'https://www.a.com/' },
+    'https://www.a.com/robots.txt': { text: 'User-agent: *\nDisallow:\n\nSitemap: https://www.a.com/sitemap.xml\n' },
+    'https://www.a.com/': { html: page({ title: '金水範例公司｜首頁內容', canonical: 'https://www.a.com/', links: ['/about'], jsonld: [ORG_JSONLD] }) },
+    'https://www.a.com/about': { html: page({ title: '金水範例公司｜關於我們', canonical: 'https://www.a.com/about', links: ['/'] }) },
+    'https://www.a.com/sitemap.xml': { xml: sitemapXml(['https://www.a.com/', 'https://www.a.com/about']) },
+  };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// A5: canonicals / sitemap entries pointing at a requested-and-redirected URL, a 404 and a noindex page
+export function canonicalTargets() {
+  const routes = goodSiteRoutes({
+    paths: ['/', '/p', '/q', '/r', '/s', '/new', '/noidx'],
+    robots: ALLOW_WITH_SITEMAP,
+    sitemap: false,
+    overrides: {
+      // /new is NOT linked: it is only reached as the final URL of /old
+      '/': { page: { links: ['/p', '/q', '/r', '/s', '/old', '/gone', '/noidx'] } },
+      '/p': { page: { canonical: 'https://a.com/old' } }, // /old was requested and redirected -> T17
+      '/q': { page: { canonical: 'https://a.com/new' } }, // final URL of /old -> no T17
+      '/r': { page: { canonical: 'https://a.com/gone' } }, // 404 -> T17
+      '/s': { page: { canonical: 'https://a.com/noidx' } }, // noindex -> T17
+      '/noidx': { page: { robotsMeta: 'noindex' } },
+    },
+  });
+  routes['https://a.com/old'] = { status: 301, location: '/new' };
+  // /gone is not routed -> 404
+  routes['https://a.com/sitemap.xml'] = { xml: sitemapXml(['https://a.com/', 'https://a.com/old', 'https://a.com/gone', 'https://a.com/noidx', 'https://a.com/p']) };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// A6: an internal link that redirects to the home page (duplicate final URL)
+export function duplicateRedirect() {
+  const routes = goodSiteRoutes({ overrides: { '/': { page: { links: [...GOOD_PATHS.filter((p) => p !== '/'), '/dup'] } } } });
+  routes['https://a.com/dup'] = { status: 301, location: '/' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// A9: no declared sitemap and /sitemap.xml 404 (or 410) -> kind missing
+export function fallbackSitemapGone(status = 404) {
+  const routes = goodSiteRoutes({ robots: ALLOW_ROBOTS, sitemap: false });
+  routes['https://a.com/sitemap.xml'] = { status, html: '<html><body>Not Found</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+export const fallbackSitemap410 = () => fallbackSitemapGone(410);
+
+// A9: a DECLARED sitemap returning 404 -> kind error (only the fallback becomes missing)
+export function declaredSitemap404() {
+  const routes = goodSiteRoutes({ robots: 'User-agent: *\nDisallow:\n\nSitemap: https://a.com/sm.xml\n', sitemap: false });
+  routes['https://a.com/sm.xml'] = { status: 404, html: '<html><body>Not Found</body></html>' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// A10: home 200 but not HTML
+export function homeNotHtml() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/'] = { status: 200, text: 'plain text home' };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// ---------------------------------------------------------------- mutation gaps (CK01–CK07, CR01)
+
+// CK01: home 500 with cf-mitigated: challenge
+export function homeChallenge500() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/'] = { status: 500, html: '<html><body>challenge</body></html>', headers: { 'cf-mitigated': 'challenge' } };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// CK02: robots 503 with cf-mitigated: challenge
+export function robotsChallenge503() {
+  const routes = goodSiteRoutes();
+  routes['https://a.com/robots.txt'] = { status: 503, html: '<html><body>challenge</body></html>', headers: { 'cf-mitigated': 'challenge' } };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// CK03: linked page 502 with cf-mitigated: challenge, plus one real 404
+export function pageChallenge502() {
+  const routes = goodSiteRoutes({
+    overrides: { '/': { page: { links: [...GOOD_PATHS.filter((p) => p !== '/'), '/bad', '/gone'] } } },
+  });
+  routes['https://a.com/bad'] = { status: 502, html: '<html><body>challenge</body></html>', headers: { 'cf-mitigated': 'challenge' } };
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// CK04: 10 linked internal pages, 2 return 404
+export const CK04_BROKEN = ['/broken-a', '/broken-b'];
+export function tenLinksTwoBroken() {
+  const ok = Array.from({ length: 8 }, (_, i) => '/ok-' + (i + 1));
+  const routes = goodSiteRoutes({
+    paths: ['/', ...ok],
+    overrides: { '/': { page: { links: [...ok.slice(0, 4), ...CK04_BROKEN, ...ok.slice(4)] } } },
+  });
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// CK07: SPA root with n characters of visible text, page total < 200 chars, external script
+export function spaRootText(n) {
+  const routes = goodSiteRoutes({
+    paths: ['/'],
+    overrides: {
+      '/': {
+        page: { text: '', h1: null, images: [], links: [], body: '<div id="root"><p>' + 'a'.repeat(n) + '</p></div><script src="/static/app.js"></script>' },
+      },
+    },
+  });
+  return { site: createFakeSite({ routes }), start: START };
+}
+
+// CR01: the Worker says ourPolicy unknown for an origin although its robots.txt text would allow everything
+export function workerUnknownStart() {
+  const routes = goodSiteRoutes({ robots: ALLOW_WITH_SITEMAP });
+  return {
+    site: createFakeSite({ routes, forceOurPolicy: (origin) => (origin === 'https://a.com' ? 'unknown' : undefined) }),
+    start: START,
+  };
+}
+export function workerUnknownHttp() {
+  const routes = goodSiteRoutes();
+  routes['http://a.com/robots.txt'] = { text: ALLOW_ROBOTS };
+  routes['http://a.com/'] = { html: page({ title: 'HTTP 版首頁' }) };
+  return {
+    site: createFakeSite({ routes, forceOurPolicy: (origin) => (origin === 'http://a.com' ? 'unknown' : undefined) }),
+    start: START,
+  };
+}
+export function workerUnknownOverflow() {
+  // a 2,001-char rule in another group -> parse overflow -> Worker unknown, although our group allows all
+  const robots = 'User-agent: Other\nDisallow: /' + 'x'.repeat(2000) + '\n\nUser-agent: *\nDisallow:\n';
+  return { site: createFakeSite({ routes: goodSiteRoutes({ robots }) }), start: START };
+}
+
+// COV04/COV05 (§5.7 step 4): start https://www.a.com/, www robots allows, www home 301 -> https://a.com/,
+// a.com robots.txt is a 403 challenge (Worker ourPolicy unknown)
+export function finalOriginRobotsUnknown() {
+  const routes = {
+    'https://www.a.com/robots.txt': { text: ALLOW_ROBOTS },
+    'https://www.a.com/': { status: 301, location: 'https://a.com/' },
+    'https://a.com/robots.txt': { status: 403, html: '<html><body>Just a moment...</body></html>', headers: { 'cf-mitigated': 'challenge' } },
+    'https://a.com/': { html: page({ title: '金水範例公司｜首頁內容', canonical: 'https://a.com/', links: ['/about'] }) },
+    'https://a.com/about': { html: page({ title: '金水範例公司｜關於我們', canonical: 'https://a.com/about', links: ['/'] }) },
+    'https://a.com/sitemap.xml': { xml: sitemapXml(['https://a.com/', 'https://a.com/about']) },
+  };
+  return { site: createFakeSite({ routes }), start: 'https://www.a.com/' };
+}
+
 export const ALL_SCENARIOS = {
   s01, s02, s03, s04, s05, s06, s07, s08, s09, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23,
   r29Frontend, robots404, home404, foreignSitemap, userFetchBlocked, noOrgSchema,
+  percentCase, wwwHomeCanonical, canonicalTargets, duplicateRedirect, fallbackSitemapGone, fallbackSitemap410, declaredSitemap404, homeNotHtml,
+  homeChallenge500, robotsChallenge503, pageChallenge502, tenLinksTwoBroken, workerUnknownStart, workerUnknownHttp, workerUnknownOverflow,
+  spaRoot50: () => spaRootText(50),
+  spaRoot19: () => spaRootText(19),
+  finalOriginRobotsUnknown,
 };

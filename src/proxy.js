@@ -157,11 +157,9 @@ export async function proxyFetch(targetUrl, kind, siteHost, {
       meta.location = null;
       meta.stop = 'location_too_long';
       await cancelBody(response, signal);
-      if (kind === 'robots') meta.chain.push({ url: current, status: response.status, location: null });
       return { meta, bytes: null };
     }
     const redirect = REDIRECT_STATUSES.includes(response.status);
-    if (kind === 'robots') meta.chain.push({ url: current, status: response.status, location });
     if (!redirect || kind !== 'robots' || !location) {
       if (redirect) {
         meta.skipped = 'redirect';
@@ -211,6 +209,7 @@ export async function proxyFetch(targetUrl, kind, siteHost, {
       meta.stop = 'max_hops';
       return { meta, bytes: null };
     }
+    meta.chain.push({ url: current, status: response.status, location });
     redirects += 1;
     current = next.href;
   }

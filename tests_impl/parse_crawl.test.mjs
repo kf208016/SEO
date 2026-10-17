@@ -7,6 +7,7 @@ import { looksLikeHtml, parseSitemap } from '../public/core/sitemap.js';
 import { runAudit } from '../public/core/crawl.js';
 import { botAccess, runChecks } from '../public/core/checks.js';
 import { computeScore } from '../public/core/score.js';
+import { cleanUrl, normalizeInputUrl } from '../public/core/url.js';
 
 const encoder = new TextEncoder();
 const parser = new DOMParser();
@@ -483,4 +484,119 @@ test('S23 robots policies remain isolated by scheme', async () => {
   assert.equal(calls.includes('https://a.com/secret'), false);
   assert.equal(snapshot.limits.skippedByRobots, 1);
   assert.ok(calls.includes('http://a.com/robots.txt'));
+});
+
+test('A4 normalizeInputUrl 與 cleanUrl 大寫 pathname/search 的百分比編碼並讓 crawl 去重', async () => {
+  assert.equal(
+    normalizeInputUrl('https://a.com/%e6%9c%8d?q=%ab%2f#fragment'),
+    'https://a.com/%E6%9C%8D?q=%AB%2F',
+  );
+  assert.equal(
+    cleanUrl('/%e6%9c%8d?q=%ab%2f', 'https://a.com/base'),
+    'https://a.com/%E6%9C%8D?q=%AB%2F',
+  );
+
+  const calls = [];
+  const snapshot = await audit('https://a.com/', async (url, kind) => {
+    calls.push({ url, kind });
+    if (kind === 'robots') return allowRobots(url);
+    if (url === 'https://a.com/') {
+      return simplePage(url, '<a href="/%e6%9c%8d?q=%ab">lower</a><a href="/%E6%9C%8D?q=%AB">upper</a>');
+    }
+    if (url === 'https://a.com/sitemap.xml') return result(url, { status: 404, type: 'application/xml' });
+    if (kind === 'probe') return result(url, { status: 404 });
+    return simplePage(url);
+  });
+  const normalized = 'https://a.com/%E6%9C%8D?q=%AB';
+  assert.equal(calls.filter((call) => call.kind === 'page' && call.url === normalized).length, 1);
+  assert.equal(Object.keys(snapshot.discovered).filter((url) => url.includes('%E6%9C%8D')).length, 1);
+  assert.equal(Object.keys(snapshot.discovered).some((url) => /%e6|%9c|%8d|%ab/u.test(url)), false);
+});
+
+test('A6 duplicateOf 頁面不加入 page_unanalyzable', async () => {
+  const snapshot = await audit('https://a.com/', async (url, kind) => {
+    if (kind === 'robots') return allowRobots(url);
+    if (url === 'https://a.com/') {
+      return simplePage(url, '<a href="/canonical">canonical</a><a href="/alias">alias</a>');
+    }
+    if (url === 'https://a.com/sitemap.xml') return result(url, { status: 404, type: 'application/xml' });
+    if (url === 'https://a.com/alias') return result(url, { status: 301, location: '/canonical' });
+    if (kind === 'probe') return result(url, { status: 404 });
+    return simplePage(url);
+  });
+  const duplicate = snapshot.pages.find((entry) => entry.url === 'https://a.com/alias');
+  assert.equal(duplicate.finalUrl, 'https://a.com/canonical');
+  assert.equal(duplicate.duplicateOf, 'https://a.com/canonical');
+  assert.equal(duplicate.page, null);
+  assert.equal(snapshot.coverage.reasons.includes('page_unanalyzable'), false);
+  assert.equal(snapshot.coverage.status, 'complete');
+});
+
+test('A9 fallback sitemap 404/410 為 missing，觸發 T18 且不觸發 T37', async () => {
+  for (const status of [404, 410]) {
+    const snapshot = await audit('https://a.com/', async (url, kind) => {
+      if (kind === 'robots') return allowRobots(url);
+      if (url === 'https://a.com/') return simplePage(url);
+      if (url === 'https://a.com/sitemap.xml') return result(url, { status, type: 'application/xml' });
+      if (kind === 'probe') return result(url, { status: 404 });
+      return simplePage(url);
+    });
+    assert.deepEqual(snapshot.sitemaps[0], {
+      url: 'https://a.com/sitemap.xml',
+      status,
+      kind: 'missing',
+      urlCount: 0,
+      fallback: true,
+      error: null,
+      truncated: false,
+      accessBlocked: false,
+    });
+    const ids = findingIds(snapshot);
+    assert.ok(ids.has('T18'));
+    assert.equal(ids.has('T37'), false);
+    assert.equal(snapshot.coverage.reasons.includes('sitemap_unverifiable'), false);
+  }
+});
+
+test('A9 宣告 sitemap 的 404 維持 error，觸發 T37 而不觸發 T18', async () => {
+  const snapshot = await audit('https://a.com/', async (url, kind) => {
+    if (kind === 'robots') return result(url, {
+      body: 'User-agent: *\nAllow: /\nSitemap: https://a.com/declared.xml',
+      type: 'text/plain',
+      ourPolicy: { policy: 'allow_all', rulesCount: 0 },
+    });
+    if (url === 'https://a.com/') return simplePage(url);
+    if (url === 'https://a.com/declared.xml') return result(url, { status: 404, type: 'application/xml' });
+    if (kind === 'probe') return result(url, { status: 404 });
+    return simplePage(url);
+  });
+  assert.equal(snapshot.sitemaps[0].fallback, false);
+  assert.equal(snapshot.sitemaps[0].kind, 'error');
+  const ids = findingIds(snapshot);
+  assert.ok(ids.has('T37'));
+  assert.equal(ids.has('T18'), false);
+});
+
+test('A10 首頁不可分析時停止 sitemap、其他頁面與 probes', async () => {
+  const calls = [];
+  const snapshot = await audit('https://a.com/start', async (url, kind) => {
+    calls.push({ url, kind });
+    if (kind === 'robots') return result(url, {
+      body: 'User-agent: *\nAllow: /\nSitemap: https://a.com/declared.xml',
+      type: 'text/plain',
+      ourPolicy: { policy: 'allow_all', rulesCount: 0 },
+    });
+    if (url === 'https://a.com/') return result(url, { status: 200, body: 'plain text', type: 'text/plain' });
+    throw new Error(`unexpected request: ${kind} ${url}`);
+  });
+  assert.deepEqual(calls, [
+    { url: 'https://a.com/robots.txt', kind: 'robots' },
+    { url: 'https://a.com/', kind: 'page' },
+  ]);
+  assert.equal(snapshot.pages.length, 1);
+  assert.deepEqual(snapshot.sitemaps, []);
+  assert.deepEqual(snapshot.probes, { soft404: null, http: null });
+  assert.equal(snapshot.limits.requests, 1);
+  assert.equal(snapshot.coverage.status, 'failed');
+  assert.ok(snapshot.coverage.reasons.includes('home_not_analyzable'));
 });

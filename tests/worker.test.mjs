@@ -183,7 +183,7 @@ test('W07 GET /api/config works without configuration checks', async () => {
   assert.equal(body.contactUrl, env.CONTACT_URL);
   assert.equal(body.maxPages, 15);
   assert.equal(body.version, VERSION);
-  assert.equal(VERSION, '1.4.0');
+  assert.equal(VERSION, '1.5.0');
 });
 
 // ------------------------------------------------------------------ W07 POST common checks
@@ -390,6 +390,9 @@ test('W07 robots request stores rules in the DO and meta.ourPolicy matches; page
   assert.ok(stored, 'DO r: record for https://a.com');
   assert.equal(stored.policy, meta.ourPolicy.policy);
   assert.equal(stored.rules.length, meta.ourPolicy.rulesCount);
+  // A1 (v1.5): DO rules are { allow, path } objects
+  assert.deepEqual(stored.rules, [{ allow: false, path: '/private' }]);
+  assert.deepEqual(meta.chain, []);
   assert.equal(storage.peek('a:' + s.id).used.robots, 1);
 
   const denied = await apiFetch(env, s.token, 'https://a.com/private', 'page');
@@ -422,6 +425,7 @@ test('W07 robots 301 http://a.com -> https://a.com: both origins stored with the
   assert.equal(meta.status, 200);
   assert.equal(meta.finalUrl, 'https://a.com/robots.txt');
   assert.equal(meta.chain[0].url, 'http://a.com/robots.txt');
+  assert.equal(meta.chain.length, 1, 'A7: only the followed 3xx hop');
   const http = storage.peek(`r:${s.id}:http://a.com`);
   const https = storage.peek(`r:${s.id}:https://a.com`);
   assert.ok(http && https);
@@ -507,4 +511,126 @@ test('R29 our group with 1,001 rules: Worker ourPolicy unknown, DO stores unknow
   const res = await apiFetch(env, s.token, 'https://a.com/', 'page');
   assert.equal(res.status, 403);
   assert.equal((await json(res)).error, 'robots_disallowed');
+});
+
+// ------------------------------------------------------------------ v1.5 A2: Turnstile testing keys on localhost
+const LOCAL_BASES = ['http://localhost:8787', 'http://127.0.0.1:8787'];
+const TEST_KEYS = { TURNSTILE_SITEKEY: '1x00000000000000000000AA', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA' };
+// what the official testing keys return: no action, hostname example.com
+const TESTKEY_SV = { success: true, hostname: 'example.com', 'error-codes': [], metadata: { result_with_testing_key: true } };
+
+async function startAt(env, base) {
+  return call(env, apiRequest('/api/start', { base, origin: base, body: { url: 'https://a.com/', turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' } }));
+}
+async function startOkAt(env, base) {
+  const res = await startAt(env, base);
+  assert.equal(res.status, 200, 'start should succeed on ' + base);
+  const body = await json(res);
+  const v = await verifyToken(body.token, env.AUDIT_SECRET, Date.now());
+  return { ...body, id: v.id };
+}
+async function fetchAt(env, base, token, u, k) {
+  clock.advance(1000);
+  return call(env, apiRequest('/api/fetch', { base, origin: base, body: { u, k }, token }));
+}
+
+test('A2 localhost / 127.0.0.1: testing-key siteverify response (no action, hostname example.com) passes', async () => {
+  for (const base of LOCAL_BASES) {
+    stub = installFetchStub({ targets: defaultTargets(), siteverify: () => TESTKEY_SV });
+    const { env } = makeEnv(TEST_KEYS);
+    const res = await startAt(env, base);
+    assert.equal(res.status, 200, base);
+    stub.restore();
+    stub = null;
+  }
+});
+
+test('A2 the same testing-key response on a production hostname fails (real-looking keys)', async () => {
+  stub = installFetchStub({ targets: defaultTargets(), siteverify: () => TESTKEY_SV });
+  const { env } = makeEnv();
+  const res = await start(env);
+  assert.equal(res.status, 403);
+  assert.equal((await json(res)).error, 'turnstile_failed');
+});
+
+test('A2 on localhost without result_with_testing_key the action is still required; success false still fails', async () => {
+  for (const sv of [
+    { success: true, hostname: 'localhost' },
+    { success: true, hostname: 'example.com', metadata: { result_with_testing_key: false } },
+    { success: true, action: 'other_action', hostname: 'localhost', metadata: {} },
+    { success: false, hostname: 'example.com', metadata: { result_with_testing_key: true } },
+  ]) {
+    stub = installFetchStub({ targets: defaultTargets(), siteverify: () => sv });
+    const { env } = makeEnv(TEST_KEYS);
+    const res = await startAt(env, 'http://localhost:8787');
+    assert.equal(res.status, 403, JSON.stringify(sv));
+    assert.equal((await json(res)).error, 'turnstile_failed');
+    stub.restore();
+    stub = null;
+  }
+});
+
+// ------------------------------------------------------------------ v1.5 A3: DEV_SKIP_DNS_PRECHECK only on localhost
+const PRIVATE_DNS = (name, type) => (type === 'A' ? { Status: 0, Answer: [{ name, type: 1, TTL: 60, data: '10.0.0.1' }] } : { Status: 0 });
+const dohCalls = () => stub.log.filter((l) => new URL(l.url).hostname === 'cloudflare-dns.com').length;
+
+test('A3 DEV_SKIP_DNS_PRECHECK=true on localhost skips the DoH pre-check', async () => {
+  for (const base of LOCAL_BASES) {
+    stub = installFetchStub({ targets: defaultTargets(), siteverify: () => TESTKEY_SV, dns: PRIVATE_DNS });
+    const { env } = makeEnv({ ...TEST_KEYS, DEV_SKIP_DNS_PRECHECK: 'true' });
+    const s = await startOkAt(env, base);
+    const res = await fetchAt(env, base, s.token, 'https://a.com/robots.txt', 'robots');
+    assert.equal(res.status, 200, base);
+    const { meta } = await frame(res);
+    assert.equal(meta.error, null, base);
+    assert.equal(meta.status, 200, base);
+    assert.equal(dohCalls(), 0, base + ': no DoH query');
+    assert.ok(stub.targetCalls().some((c) => c.url === 'https://a.com/robots.txt'), base);
+    stub.restore();
+    stub = null;
+  }
+});
+
+test('A3 DEV_SKIP_DNS_PRECHECK=true is ignored on a non-localhost hostname (DoH used, private address blocked)', async () => {
+  stub = installFetchStub({ targets: defaultTargets(), dns: PRIVATE_DNS });
+  const { env } = makeEnv({ DEV_SKIP_DNS_PRECHECK: 'true' });
+  const s = await startOk(env);
+  const res = await apiFetch(env, s.token, 'https://a.com/robots.txt', 'robots');
+  assert.equal(res.status, 200);
+  const { meta } = await frame(res);
+  assert.equal(meta.error, 'blocked_address');
+  assert.ok(dohCalls() > 0, 'DoH must be queried');
+  assert.ok(!stub.targetCalls().some((c) => c.url === 'https://a.com/robots.txt'), 'target must not be fetched');
+});
+
+test('A3 localhost without DEV_SKIP_DNS_PRECHECK still pre-checks DNS', async () => {
+  stub = installFetchStub({ targets: defaultTargets(), siteverify: () => TESTKEY_SV, dns: PRIVATE_DNS });
+  const { env } = makeEnv({ ...TEST_KEYS, DEV_SKIP_DNS_PRECHECK: 'false' });
+  const base = 'http://localhost:8787';
+  const s = await startOkAt(env, base);
+  const { meta } = await frame(await fetchAt(env, base, s.token, 'https://a.com/robots.txt', 'robots'));
+  assert.equal(meta.error, 'blocked_address');
+  assert.ok(dohCalls() > 0);
+});
+
+// ------------------------------------------------------------------ mutation gap WK06
+test('WK06 robots 2-hop internal redirect http://www.a.com -> http://a.com -> https://a.com: policy stored for all three origins', async () => {
+  stub = installFetchStub({
+    targets: defaultTargets({ 'http://www.a.com/robots.txt': { status: 301, body: null, headers: { location: 'http://a.com/robots.txt' } } }),
+  });
+  const { env, storage } = makeEnv();
+  const s = await startOk(env);
+  const res = await apiFetch(env, s.token, 'http://www.a.com/robots.txt', 'robots');
+  assert.equal(res.status, 200);
+  const { meta } = await frame(res);
+  assert.equal(meta.status, 200);
+  assert.equal(meta.finalUrl, 'https://a.com/robots.txt');
+  assert.deepEqual(meta.chain.map((c) => c.url), ['http://www.a.com/robots.txt', 'http://a.com/robots.txt']);
+  for (const origin of ['http://www.a.com', 'http://a.com', 'https://a.com']) {
+    const rec = storage.peek(`r:${s.id}:${origin}`);
+    assert.ok(rec, 'stored for ' + origin);
+    assert.equal(rec.policy, 'rules', origin);
+    assert.deepEqual(rec.rules, [{ allow: false, path: '/private' }], origin);
+  }
+  assert.equal(storage.peek('a:' + s.id).used.robots, 3);
 });

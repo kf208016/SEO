@@ -133,6 +133,8 @@ test('W04 robots: same-site 301 to /robots.txt is followed, chain recorded, perm
   assert.equal(meta.finalUrl, 'https://a.com/robots.txt');
   assert.equal(meta.stop, null);
   assert.deepEqual(meta.chain[0], { url: 'https://www.a.com/robots.txt', status: 301, location: 'https://a.com/robots.txt' });
+  // A7 (v1.5): chain holds only the followed 3xx hops, not the final 200
+  assert.equal(meta.chain.length, 1);
   assert.equal(dec.decode(bytes), 'User-agent: *\nDisallow: /x\n');
   assert.deepEqual(permits, ['https://a.com/robots.txt']);
   // DNS pre-check is redone for every hop
@@ -146,6 +148,7 @@ test('W04 robots: relative Location to /robots.txt across http->https is followe
   assert.equal(calls.length, 2);
   assert.equal(meta.finalUrl, 'https://a.com/robots.txt');
   assert.equal(meta.chain[0].status, 308);
+  assert.equal(meta.chain.length, 1);
 });
 
 test('W04 robots: redirect to /other.txt -> stop bad_redirect (not followed)', async () => {
@@ -234,6 +237,13 @@ test('W04 robots: 3-hop chain asks permit for hops 2 and 3 only', async () => {
   assert.deepEqual(permits, ['https://a.com/robots.txt', 'http://a.com/robots.txt']);
   assert.equal(meta.chain[0].url, 'https://www.a.com/robots.txt');
   assert.equal(meta.chain[1].url, 'https://a.com/robots.txt');
+  assert.equal(meta.chain.length, 2);
+});
+
+test('A7 robots without redirects -> chain is empty (the final non-3xx response is never in chain)', async () => {
+  const { meta } = await run('https://a.com/robots.txt', 'robots', () => text('User-agent: *\nDisallow:\n'));
+  assert.equal(meta.status, 200);
+  assert.deepEqual(meta.chain, []);
 });
 
 test('W04 Location longer than 2,048 bytes -> location null, stop location_too_long (page and robots)', async () => {

@@ -396,3 +396,50 @@ test('W06 AuditGate dailyCap comes from env.DAILY_AUDIT_CAP', async () => {
     assert.equal((await doPost(gate, '/admit', { ip: '6.6.1.2', host: 'b.com' })).error, 'daily_cap');
   });
 });
+
+// ------------------------------------------------------------------ v1.5 A1 / mutation gap GT02
+test('A1 storeRobots accepts { allow, path } rule objects and consume applies them (longest match, allow wins)', async () => {
+  const { core, clock, storage } = setup();
+  await openAudit(core);
+  const rules = [
+    { allow: false, path: '/private' },
+    { allow: true, path: '/private/ok' },
+  ];
+  assert.equal((await core.storeRobots({ auditId: A1, origins: ['https://a.com'], policy: 'rules', rules })).ok, true);
+  assert.deepEqual(storage.peek(`r:${A1}:https://a.com`), { policy: 'rules', rules });
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'https://a.com/private/x' })).error, 'robots_disallowed');
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'https://a.com/private/ok/1' })).ok, true);
+  clock.t += 1000;
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'https://a.com/public' })).ok, true);
+});
+
+test('GT02 robots stored only for https://a.com: consume http://a.com/x -> robots_required (reverse of W09)', async () => {
+  const { core, clock } = setup();
+  await openAudit(core);
+  await core.storeRobots({ auditId: A1, origins: ['https://a.com'], policy: 'allow_all', rules: [] });
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'http://a.com/x' })).error, 'robots_required');
+  assert.equal((await core.consume({ auditId: A1, kind: 'probe', url: 'http://a.com/' })).error, 'robots_required');
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'http://www.a.com/x' })).error, 'robots_required');
+  clock.t += 1000;
+  assert.equal((await core.consume({ auditId: A1, kind: 'page', url: 'https://a.com/x' })).ok, true);
+});
+
+test('GT02 (DO route) robots stored only for https://a.com: /consume http://a.com/x -> robots_required', async () => {
+  await withFixedNow(Date.UTC(2026, 9, 17, 6, 0, 0), async () => {
+    const storage = new FakeStorage();
+    const gate = new AuditGate(makeCtx(storage), { DAILY_AUDIT_CAP: '1000' });
+    assert.equal((await doPost(gate, '/admit', { ip: '6.6.2.1', host: 'a.com' })).ok, true);
+    assert.equal((await doPost(gate, '/open', { auditId: A1, host: 'a.com' })).ok, true);
+    assert.equal((await doPost(gate, '/storeRobots', { auditId: A1, origins: ['https://a.com'], policy: 'allow_all', rules: [] })).ok, true);
+    assert.equal((await doPost(gate, '/consume', { auditId: A1, kind: 'page', url: 'http://a.com/x' })).error, 'robots_required');
+  });
+});
+
+test('W06 expired boundary: expiresAt <= now is expired (v1.5 states it)', async () => {
+  const { core, clock } = setup();
+  await openAudit(core);
+  clock.t = AUDIT_TTL_MS - 1;
+  assert.equal((await core.consume({ auditId: A1, kind: 'robots', url: 'https://a.com/robots.txt' })).ok, true);
+  clock.t = AUDIT_TTL_MS;
+  assert.equal((await core.consume({ auditId: A1, kind: 'robots', url: 'https://a.com/robots.txt' })).error, 'expired');
+});

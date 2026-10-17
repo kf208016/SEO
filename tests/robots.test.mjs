@@ -342,3 +342,39 @@ test('parseRobots: empty user-agent value and lines without ":" are ignored', ()
   assert.equal(p.overflow, false);
   assert.equal(isAllowed(p, 'x', '/y'), false);
 });
+
+// ------------------------------------------------------------------ v1.5 A1: rule objects are { allow, path }
+test('A1 rule objects are { allow: boolean, path } (normalised) in groups[].rules, rulesFor().rules and explain().rule', () => {
+  const parsed = parseRobots('User-agent: *\nDisallow: /x\nAllow: /x/y\nDisallow: /產品\n');
+  assert.ok(Array.isArray(parsed.groups));
+  const all = parsed.groups.flatMap((g) => g.rules);
+  assert.deepEqual(all, [
+    { allow: false, path: '/x' },
+    { allow: true, path: '/x/y' },
+    { allow: false, path: '/%E7%94%A2%E5%93%81' },
+  ]);
+  assert.deepEqual(rulesFor(parsed, 'kinsuiseocheck').rules, all);
+  assert.deepEqual(explain(parsed, 'googlebot', '/x/z').rule, { allow: false, path: '/x' });
+  assert.deepEqual(explain(parsed, 'googlebot', '/x/y/z').rule, { allow: true, path: '/x/y' });
+  // hand-built rule objects work with isAllowedByRules
+  const rules = [{ allow: false, path: '/private' }, { allow: true, path: '/private/ok' }];
+  assert.equal(isAllowedByRules(rules, '/private/x'), false);
+  assert.equal(isAllowedByRules(rules, '/private/ok/1'), true);
+  assert.equal(isAllowedByRules(rules, '/public'), true);
+});
+
+// ------------------------------------------------------------------ mutation gap RB14
+test('RB14 each literal segment after a "*" must be found after the previous segment', () => {
+  assert.equal(matchRule('/a*a', '/a'), false);
+  assert.equal(matchRule('/a*a', '/aa'), true);
+  assert.equal(matchRule('/a*a', '/aXa'), true);
+  assert.equal(matchRule('/x*y*z', '/xzy'), false);
+  assert.equal(matchRule('/x*y*z', '/xyz'), true);
+  assert.equal(matchRule('/x*y*z', '/x-y-z-'), true);
+  assert.equal(matchRule('/ab*b', '/ab'), false);
+  assert.equal(matchRule('/a*a$', '/a'), false);
+  assert.equal(matchRule('/*ab*ba$', '/aba'), false);
+  assert.equal(allowed('User-agent: *\nDisallow: /a*a\n', 'x', '/a'), true);
+  assert.equal(allowed('User-agent: *\nDisallow: /x*y*z\n', 'x', '/xzy'), true);
+  assert.equal(allowed('User-agent: *\nDisallow: /x*y*z\n', 'x', '/xyz'), false);
+});

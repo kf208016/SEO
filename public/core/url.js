@@ -1,5 +1,15 @@
 export const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 
+function uppercasePercentEncoding(value) {
+  return value.replace(/%[0-9a-f]{2}/giu, (match) => match.toUpperCase());
+}
+
+function normalizePercentEncoding(url) {
+  url.pathname = uppercasePercentEncoding(url.pathname);
+  url.search = uppercasePercentEncoding(url.search);
+  return url;
+}
+
 export function stripWww(hostname) {
   const host = String(hostname ?? '').toLowerCase();
   return host.startsWith('www.') ? host.slice(4) : host;
@@ -14,7 +24,7 @@ export function normalizeInputUrl(input) {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.hash = '';
     if (url.hostname.endsWith('.')) url.hostname = url.hostname.slice(0, -1);
-    return url.href;
+    return normalizePercentEncoding(url).href;
   } catch {
     return null;
   }
@@ -26,7 +36,7 @@ export function cleanUrl(href, base) {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.hash = '';
     if (url.hostname.endsWith('.')) url.hostname = url.hostname.slice(0, -1);
-    return url.href;
+    return normalizePercentEncoding(url).href;
   } catch {
     return null;
   }

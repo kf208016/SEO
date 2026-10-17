@@ -153,8 +153,8 @@ test('SOURCES: every id with exact title and url', () => {
   for (const b of BOTS) assert.ok(SOURCES[b.source], 'BOTS source exists: ' + b.source);
 });
 
-test('VERSION is 1.4.0', () => {
-  assert.equal(VERSION, '1.4.0');
+test('VERSION is 1.5.0', () => {
+  assert.equal(VERSION, '1.5.0');
 });
 
 // ------------------------------------------------------------------ url.js
@@ -181,4 +181,15 @@ test('url.js: stripWww, cleanUrl, pathAndQuery, isSameSite, stripQuery, REDIRECT
   assert.equal(isSameSite('https://b.a.com/x', 'a.com'), false);
   assert.equal(stripQuery('https://a.com/p?q=1#h'), 'https://a.com/p');
   assert.deepEqual(REDIRECT_STATUSES, [301, 302, 303, 307, 308]);
+});
+
+// ------------------------------------------------------------------ v1.5 A4: %hh upper-cased (not decoded)
+test('A4 cleanUrl / normalizeInputUrl upper-case %hh in pathname and search without decoding', () => {
+  assert.equal(cleanUrl('/%e6%9c%8d?q=%e6%9c%8d&x=%2f#%ab', 'https://a.com/'), 'https://a.com/%E6%9C%8D?q=%E6%9C%8D&x=%2F');
+  assert.equal(cleanUrl('https://a.com/%e6%9c%8d', 'https://a.com/'), cleanUrl('https://a.com/%E6%9C%8D', 'https://a.com/'));
+  assert.equal(cleanUrl('https://a.com/%7e%41%2a', 'https://a.com/'), 'https://a.com/%7E%41%2A');
+  assert.equal(normalizeInputUrl('a.com/%e6%9c%8d?x=%ab#%cd'), 'https://a.com/%E6%9C%8D?x=%AB');
+  assert.equal(normalizeInputUrl('https://a.com/%7e'), 'https://a.com/%7E');
+  // text outside %hh keeps its case
+  assert.equal(cleanUrl('/Path/abc?Q=v', 'https://a.com/'), 'https://a.com/Path/abc?Q=v');
 });

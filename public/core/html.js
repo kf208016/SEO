@@ -1,5 +1,17 @@
 const SAFE_HTML = Symbol('SafeHtml');
 
+class SafeHtml {
+  constructor(value) {
+    this[SAFE_HTML] = true;
+    this.value = String(value);
+    Object.freeze(this);
+  }
+
+  toString() {
+    return this.value;
+  }
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -10,12 +22,13 @@ export function escapeHtml(value) {
 }
 
 export function raw(value) {
-  return Object.freeze({ [SAFE_HTML]: true, value: String(value) });
+  if (typeof value !== 'string') throw new TypeError('raw() requires a string');
+  return new SafeHtml(value);
 }
 
 function renderValue(value) {
   if (Array.isArray(value)) return value.map(renderValue).join('');
-  if (value && value[SAFE_HTML] === true) return value.value;
+  if (value && value[SAFE_HTML] === true) return value.toString();
   return escapeHtml(value);
 }
 
@@ -24,7 +37,7 @@ export function html(strings, ...values) {
   for (let i = 0; i < values.length; i += 1) {
     result += renderValue(values[i]) + (strings[i + 1] ?? '');
   }
-  return result;
+  return new SafeHtml(result);
 }
 
 export function safeHref(value) {

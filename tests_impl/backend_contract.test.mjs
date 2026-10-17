@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { runAudit } from '../public/core/crawl.js';
 import { decodeFrame } from '../public/core/frame.js';
 import {
   OUR_RULES_MAX,
+  explain,
   parseRobots,
   rulesFor,
 } from '../public/core/robots.js';
@@ -299,7 +301,6 @@ test('W04 page 不跟轉址，robots 同站轉址逐跳記錄且逐跳取得許�
   assert.equal(permits, 1);
   assert.deepEqual(robots.meta.chain, [
     { url: 'http://a.com/robots.txt', status: 301, location: 'https://a.com/robots.txt' },
-    { url: 'https://a.com/robots.txt', status: 200, location: null },
   ]);
   assert.equal(new TextDecoder().decode(robots.bytes), 'User-agent: *\nAllow: /');
 });
@@ -326,7 +327,7 @@ test('W04 robots 拒絕錯誤路徑、站外、循環與第六次轉址', async 
     }),
   });
   assert.equal(loop.meta.stop, 'loop');
-  assert.equal(loop.meta.chain.length, 2);
+  assert.equal(loop.meta.chain.length, 1);
 
   let requests = 0;
   let permitCalls = 0;
@@ -341,7 +342,7 @@ test('W04 robots 拒絕錯誤路徑、站外、循環與第六次轉址', async 
   assert.equal(maxHops.meta.stop, 'max_hops');
   assert.equal(requests, 6);
   assert.equal(permitCalls, 5);
-  assert.equal(maxHops.meta.chain.length, 6);
+  assert.equal(maxHops.meta.chain.length, 5);
 });
 
 test('W04 permit 被拒時不送出該跳，且保留錯誤代碼', async () => {
@@ -772,7 +773,7 @@ test('W07 robots 從 HTTP 轉 HTTPS 時兩個 origin 共用政策且額度為兩
   () => worker.fetch(apiRequest('/api/fetch', { u: 'http://a.com/robots.txt', k: 'robots' }, { token }), env));
   assert.equal(response.status, 200);
   const frame = decodeFrame(await response.arrayBuffer());
-  assert.equal(frame.meta.chain.length, 2);
+  assert.equal(frame.meta.chain.length, 1);
   assert.deepEqual(storage.map.get(`r:${id}:http://a.com`), { policy: 'rules', rules: [{ allow: true, path: '/' }] });
   assert.deepEqual(storage.map.get(`r:${id}:https://a.com`), { policy: 'rules', rules: [{ allow: true, path: '/' }] });
   assert.equal(storage.map.get(`a:${id}`).used.robots, 2);
@@ -797,4 +798,141 @@ test('W07 未知 API 路由固定回 404 not_found', async () => {
   const response = await worker.fetch(new Request('http://localhost/api/x'), configuredEnv());
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: 'not_found' });
+});
+
+test('A1 robots 規則物件在 parser、selector、explain 與 DO 都保留 { allow, path }', async () => {
+  const parsed = parseRobots([
+    'User-agent: KinsuiSEOCheck',
+    'Disallow: /private',
+    'Allow: /private/open',
+  ].join('\n'));
+  const expected = [
+    { allow: false, path: '/private' },
+    { allow: true, path: '/private/open' },
+  ];
+  assert.deepEqual(parsed.groups[0].rules, expected);
+  assert.deepEqual(rulesFor(parsed, 'kinsuiseocheck').rules, expected);
+  assert.deepEqual(explain(parsed, 'kinsuiseocheck', '/private/open').rule, expected[1]);
+
+  const storage = new AtomicStorage();
+  const gate = new GateCore({ storage, now: () => 0 });
+  const auditId = '3'.repeat(32);
+  await gate.open({ auditId, host: 'a.com' });
+  assert.deepEqual(await gate.storeRobots({
+    auditId,
+    origins: ['https://a.com'],
+    policy: 'rules',
+    rules: expected,
+  }), { ok: true });
+  assert.deepEqual(storage.map.get(`r:${auditId}:https://a.com`).rules, expected);
+});
+
+test('A2 localhost 與 127.0.0.1 的 testing-key 回應免檢 action 與 hostname，正式網域不免檢', async () => {
+  const body = { url: 'https://a.com/', turnstileToken: 'testing-token' };
+  const verification = {
+    success: true,
+    hostname: 'example.com',
+    metadata: { result_with_testing_key: true },
+  };
+
+  for (const hostname of ['localhost', '127.0.0.1']) {
+    const calls = [];
+    const expiresAt = Date.now() + 60_000;
+    const env = configuredEnv({
+      AUDIT_GATE: makeBinding(async (input) => Response.json(new URL(input).pathname === '/admit'
+        ? { ok: true }
+        : { ok: true, audit: { auditId: 'unused', host: 'a.com', expiresAt } }), calls),
+    });
+    const response = await withGlobalFetch(
+      async () => Response.json(verification),
+      () => worker.fetch(apiRequest('/api/start', body, { hostname, origin: `http://${hostname}` }), env),
+    );
+    assert.equal(response.status, 200, hostname);
+    assert.deepEqual(calls, ['/admit', '/open']);
+  }
+
+  const calls = [];
+  const env = configuredEnv({
+    TURNSTILE_SITEKEY: 'production-site-key',
+    TURNSTILE_SECRET: 'production-secret-key',
+    AUDIT_GATE: makeBinding(async () => Response.json({ ok: true }), calls),
+  });
+  const response = await withGlobalFetch(
+    async () => Response.json(verification),
+    () => worker.fetch(apiRequest('/api/start', body, {
+      hostname: 'prod.example',
+      origin: 'http://prod.example',
+    }), env),
+  );
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'turnstile_failed' });
+  assert.deepEqual(calls, ['/admit']);
+});
+
+test('A3 DEV_SKIP_DNS_PRECHECK 只在本機 request hostname 且值為 true 時生效', async () => {
+  async function exercise({ hostname, flag, production = false, idChar }) {
+    const id = idChar.repeat(32);
+    const env = configuredEnv({
+      DEV_SKIP_DNS_PRECHECK: flag,
+      TURNSTILE_SITEKEY: production ? 'production-site-key' : '1x00000000000000000000AA',
+      TURNSTILE_SECRET: production ? 'production-secret-key' : '1x0000000000000000000000000000000AA',
+      AUDIT_GATE: makeBinding(async (input) => Response.json(
+        new URL(input).pathname === '/consume' ? { ok: true, host: 'a.com' } : { ok: true },
+      )),
+    });
+    const token = await signToken({ id, exp: Date.now() + 60_000 }, env.AUDIT_SECRET);
+    let dnsCalls = 0;
+    let targetCalls = 0;
+    const response = await withGlobalFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith('https://cloudflare-dns.com/dns-query')) {
+        dnsCalls += 1;
+        const type = new URL(url).searchParams.get('type');
+        return dnsJson(type === 'A'
+          ? { Status: 0, Answer: [{ type: 1, data: '8.8.8.8' }] }
+          : { Status: 0, Answer: [] });
+      }
+      targetCalls += 1;
+      return proxyResponse('ok', { headers: { 'content-type': 'text/plain' } });
+    }, () => worker.fetch(apiRequest('/api/fetch', { u: 'https://a.com/', k: 'page' }, {
+      token,
+      hostname,
+      origin: `http://${hostname}`,
+    }), env));
+    assert.equal(response.status, 200);
+    assert.equal(decodeFrame(await response.arrayBuffer()).meta.error, null);
+    assert.equal(targetCalls, 1);
+    return dnsCalls;
+  }
+
+  assert.equal(await exercise({ hostname: 'localhost', flag: 'true', idChar: '4' }), 0);
+  assert.equal(await exercise({ hostname: '127.0.0.1', flag: 'true', idChar: '5' }), 0);
+  assert.ok(await exercise({ hostname: 'localhost', flag: 'TRUE', idChar: '6' }) > 0);
+  assert.ok(await exercise({ hostname: 'prod.example', flag: 'true', production: true, idChar: '7' }) > 0);
+  const example = await readFile(new URL('../.dev.vars.example', import.meta.url), 'utf8');
+  assert.match(example, /^DEV_SKIP_DNS_PRECHECK=false$/mu);
+});
+
+test('A7 robots chain 只包含實際跟隨的 3xx，不包含最後的 200', async () => {
+  let permits = 0;
+  const result = await proxyFetch('https://a.com/robots.txt', 'robots', 'a.com', {
+    resolveImpl: publicDns,
+    permit: async () => { permits += 1; return { ok: true }; },
+    fetchImpl: async (url) => {
+      if (url === 'https://a.com/robots.txt') {
+        return proxyResponse('', { status: 301, headers: { location: 'http://a.com/robots.txt' } });
+      }
+      if (url === 'http://a.com/robots.txt') {
+        return proxyResponse('', { status: 302, headers: { location: 'https://www.a.com/robots.txt' } });
+      }
+      return proxyResponse('User-agent: *\nAllow: /', { status: 200, headers: { 'content-type': 'text/plain' } });
+    },
+  });
+  assert.equal(permits, 2);
+  assert.deepEqual(result.meta.chain, [
+    { url: 'https://a.com/robots.txt', status: 301, location: 'http://a.com/robots.txt' },
+    { url: 'http://a.com/robots.txt', status: 302, location: 'https://www.a.com/robots.txt' },
+  ]);
+  assert.equal(result.meta.status, 200);
+  assert.equal(result.meta.finalUrl, 'https://www.a.com/robots.txt');
 });
