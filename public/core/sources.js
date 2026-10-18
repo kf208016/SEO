@@ -22,4 +22,9 @@ export const SOURCES = Object.freeze({
   'apple-bots': { title: 'Apple：關於 Applebot', url: 'https://support.apple.com/en-us/119829' },
   ccbot: { title: 'Common Crawl：CCBot', url: 'https://commoncrawl.org/ccbot' },
   'bing-chat-controls': { title: 'Bing：網站管理員控制 Bing Chat 使用內容的選項', url: 'https://blogs.bing.com/webmaster/september-2023/Announcing-new-options-for-webmasters-to-control-usage-of-their-content-in-Bing-Chat' },
+  'cloudflare-ai-default': { title: 'Cloudflare：新網域預設封鎖 AI 爬蟲（2025-07）', url: 'https://blog.cloudflare.com/content-independence-day-no-ai-crawl-without-compensation/' },
+  'content-signals': { title: 'Content Signals Policy', url: 'https://contentsignals.org/' },
+  'cloudflare-robots': { title: 'Cloudflare：代管 robots.txt', url: 'https://developers.cloudflare.com/bots/additional-configurations/managed-robots-txt/' },
+  'google-hreflang': { title: 'Google：告訴 Google 網頁的本地化版本', url: 'https://developers.google.com/search/docs/specialty/international/localized-versions' },
+  'line-url-scheme': { title: 'LINE：LINE URL scheme', url: 'https://developers.line.biz/en/docs/messaging-api/using-line-url-scheme/' },
 });

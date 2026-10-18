@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { proxyFetch, BODY_LIMITS, MAX_URL_BYTES } from '../src/proxy.js';
 
-const UA = 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://goldwatersmartlink.com.tw/)';
+// v1.9 (SPEC-002 §5.3)
+const UA = 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://seo-geo-check.fanyuchieh.workers.dev/bot.html)';
 const ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5';
 const ACCEPT_LANG = 'zh-TW,zh;q=0.9,en;q=0.5';
 const dec = new TextDecoder();

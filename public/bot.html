@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KinsuiSEOCheck 爬蟲說明｜金水智連科技</title>
+  <meta name="description" content="KinsuiSEOCheck 的用途、讀取上限、robots.txt 遵循方式與聯絡資訊。">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header"><div class="shell"><a class="brand" href="/">金水智連科技</a><span>KinsuiSEOCheck 爬蟲說明</span></div></header>
+  <main class="content-page shell">
+    <header class="page-intro">
+      <p class="eyebrow">Crawler information</p>
+      <h1>KinsuiSEOCheck 爬蟲說明</h1>
+      <p>KinsuiSEOCheck 是金水智連科技「SEO／GEO 網站健檢（線上簡易版）」使用的讀取程式。</p>
+    </header>
+
+    <section>
+      <h2>何時會讀取網站</h2>
+      <p>只有在真人於本站輸入網址並通過人機驗證後，才會讀取該網站；不會定期掃描任何網站。</p>
+      <p>每次檢查最多讀取：robots.txt 8 次、sitemap 4 次、網頁 15 頁（含轉址最多 30 次請求）、探測 2 次；兩次請求至少間隔 200 毫秒；單次回應最多讀取 2 MB。</p>
+      <p>本程式從 Cloudflare Workers 發出請求，沒有固定 IP 位址。</p>
+    </section>
+
+    <section>
+      <h2>如何封鎖</h2>
+      <p>本程式遵守 robots.txt；不希望被讀取時，請加入：</p>
+      <pre><code>User-agent: KinsuiSEOCheck
+Disallow: /</code></pre>
+    </section>
+
+    <section>
+      <h2>User-Agent</h2>
+      <pre><code>Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://seo-geo-check.fanyuchieh.workers.dev/bot.html)</code></pre>
+    </section>
+
+    <section>
+      <h2>聯絡我們</h2>
+      <ul>
+        <li><a href="https://lin.ee/8xXGMUU" target="_blank" rel="noopener noreferrer nofollow">LINE 官方帳號</a></li>
+        <li><a href="https://goldwatersmartlink.com.tw/" target="_blank" rel="noopener noreferrer nofollow">金水智連科技公司網站</a></li>
+      </ul>
+    </section>
+
+    <section lang="en">
+      <h2>English summary</h2>
+      <p><strong>Purpose:</strong> KinsuiSEOCheck reads public pages only after a person submits a URL and passes human verification for an on-demand SEO/GEO audit. It does not crawl sites on a schedule.</p>
+      <p><strong>Limits:</strong> Each audit is limited to 8 robots.txt requests, 4 sitemap requests, 15 pages (up to 30 page requests including redirects), and 2 probes. Requests are at least 200 milliseconds apart, and each response is limited to 2 MB.</p>
+      <p><strong>How to block:</strong> Add <code>User-agent: KinsuiSEOCheck</code> and <code>Disallow: /</code> to your robots.txt file.</p>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="shell">金水智連科技｜<a href="/">返回 SEO／GEO 網站健檢</a></div></footer>
+</body>
+</html>

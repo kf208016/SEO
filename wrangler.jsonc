@@ -9,6 +9,6 @@
     { "name": "RL_START", "namespace_id": "7101", "simple": { "limit": 10, "period": 60 } },
     { "name": "RL_FETCH", "namespace_id": "7102", "simple": { "limit": 60, "period": 60 } }
   ],
-  "vars": { "TURNSTILE_SITEKEY": "0x4AAAAAAFZLUB_snmUHgdi-", "CONTACT_URL": "https://lin.ee/8xXGMUU", "AUDIT_ENABLED": "true", "DAILY_AUDIT_CAP": "1000", "SELF_HOSTS": "" },
+  "vars": { "TURNSTILE_SITEKEY": "0x4AAAAAAFZLUB_snmUHgdi-", "CONTACT_URL": "https://lin.ee/8xXGMUU", "LINE_ID": "@760zrres", "AUDIT_ENABLED": "true", "DAILY_AUDIT_CAP": "1000", "SELF_HOSTS": "" },
   "observability": { "enabled": false }
 }

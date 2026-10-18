@@ -1,8 +1,8 @@
-// SPEC-001 §8 / §9 fixed copy, verbatim.
+// SPEC-001 §8 / §9 fixed copy, verbatim. v1.9 (SPEC-002 §1.1 / §5) changes: T02 / G03 / C12 summaries, BOT_TABLE_TITLE, BOT_STATUS.
 export const COPY = {
   T02: {
     title: 'robots.txt 讀取時伺服器出錯',
-    summary: '讀取 robots.txt 時伺服器回應 {status}。若 Google 也收到相同回應，依 Google 文件，前 12 小時 Google 會暫停爬取整個網站，之後才改用先前的快取版本。',
+    summary: '本工具讀取 robots.txt 時伺服器回應 {status}。這可能是伺服器出錯，也可能是對不知名爬蟲的流量限制。若 Google 也收到相同回應，依 Google 文件，前 12 小時 Google 會暫停爬取整個網站，之後才改用先前的快取版本；請網站管理者查看伺服器紀錄，確認 Googlebot 收到的回應。',
   },
   T03: {
     title: 'Google 被 robots.txt 擋在門外',
@@ -38,7 +38,7 @@ export const COPY = {
   },
   G03: {
     title: 'robots.txt 封鎖了 AI 訓練用的爬蟲',
-    summary: 'robots.txt 對 {tokens} 宣告封鎖。這些控制的是 AI 模型訓練，不會封鎖另外列出的搜尋用爬蟲（例如 Googlebot、OAI-SearchBot）；其他後續用途本工具無法判斷。這是經營者的選擇，不算問題。',
+    summary: 'robots.txt 對 {tokens} 宣告封鎖。這些控制的是 AI 模型訓練，不會封鎖另外列出的搜尋用爬蟲（例如 Googlebot、OAI-SearchBot）；其他後續用途本工具無法判斷。封鎖後，這些模型的內建知識可能較少提到貴公司；要不要開放是經營上的決定，不算問題。',
   },
   G04: {
     summary: 'robots.txt 對 {tokens} 宣告封鎖。這類爬蟲是在使用者要求時即時讀取網頁，官方表示不一定遵守 robots.txt，實際效果無法判斷。',
@@ -57,7 +57,7 @@ export const COPY = {
   C11: { title: 'JSON-LD 語法無法解析' },
   C12: {
     title: '使用了 FAQ 結構化資料',
-    summary: 'Google 自 2026-05-07 起不再顯示 FAQ 複合式搜尋結果（問答展開），2026 年 6 月移除相關文件。標記可以保留，但不會再有展開效果；問答內容本身對讀者仍有幫助。',
+    summary: 'Google 自 2023 年 8 月起只對少數政府與健康類網站顯示 FAQ 複合式搜尋結果，並於 2026-05-07 全面停止顯示，2026 年 6 月移除相關文件。標記可以保留，但不會再有展開效果；問答內容本身對讀者仍有幫助。',
   },
 };
 
@@ -84,9 +84,9 @@ export const CTA_TITLE = '需要完整健檢、修正與上線後追蹤？';
 export const CTA_BUTTON = '加入 LINE 官方帳號諮詢';
 export const CAPPED_P0 = '因為有阻斷級問題，分數上限為 40 分';
 export const CAPPED_P1 = '因為有高風險問題，分數上限為 79 分';
-export const BOT_TABLE_TITLE = 'robots.txt 對各爬蟲的規則';
+export const BOT_TABLE_TITLE = 'robots.txt 對各爬蟲的宣告（不代表防火牆的實際放行）';
 export const BOT_GROUPS = ['搜尋引擎', 'AI 搜尋', 'AI 訓練', '使用者即時讀取'];
-export const BOT_STATUS = { declared_allowed: '✅ 規則允許', declared_disallowed: '⛔ 規則封鎖', unknown: '❔ 無法判斷' };
+export const BOT_STATUS = { declared_allowed: 'robots.txt 未禁止', declared_disallowed: '⛔ robots.txt 禁止', unknown: '❔ 無法判斷' };
 export const USER_FETCH_NOTE = '這類爬蟲實際是否遵守 robots.txt 由各服務決定';
 export const SEVERITY_LABEL = { P0: '阻斷', P1: '高', P2: '中', P3: '低', INFO: '資訊' };
 export const EVIDENCE_LABEL = { verified: '已驗證', inferred: '推論', unverifiable: '無法驗證' };

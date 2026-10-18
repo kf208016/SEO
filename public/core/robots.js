@@ -35,6 +35,7 @@ export function parseRobots(text, { truncated = false } = {}) {
   if (truncated && lines.length) lines.pop();
   const groups = [];
   const sitemaps = [];
+  const contentSignals = [];
   let group = null;
   let count = 0;
   let overflow = false;
@@ -59,6 +60,28 @@ export function parseRobots(text, { truncated = false } = {}) {
       group.agents.push(match[0]);
       continue;
     }
+    if (field === 'content-signal') {
+      if (!group) continue;
+      const signal = {
+        group,
+        search: null,
+        aiInput: null,
+        aiTrain: null,
+        raw: value,
+      };
+      for (const part of value.split(',')) {
+        const equals = part.indexOf('=');
+        if (equals < 0) continue;
+        const key = part.slice(0, equals).trim().toLowerCase();
+        const parsedValue = part.slice(equals + 1).trim().toLowerCase();
+        if (parsedValue !== 'yes' && parsedValue !== 'no') continue;
+        if (key === 'search') signal.search = parsedValue;
+        else if (key === 'ai-input') signal.aiInput = parsedValue;
+        else if (key === 'ai-train') signal.aiTrain = parsedValue;
+      }
+      contentSignals.push(signal);
+      continue;
+    }
     if ((field !== 'allow' && field !== 'disallow') || !group) continue;
     group.hasRules = true;
     if (!value) continue;
@@ -72,6 +95,13 @@ export function parseRobots(text, { truncated = false } = {}) {
   return {
     groups: groups.map(({ agents, rules }) => ({ agents, rules })),
     sitemaps,
+    contentSignals: contentSignals.map(({ group: owner, search, aiInput, aiTrain, raw }) => ({
+      agents: [...owner.agents],
+      search,
+      aiInput,
+      aiTrain,
+      raw,
+    })),
     overflow,
   };
 }

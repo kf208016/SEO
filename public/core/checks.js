@@ -6,6 +6,17 @@ import { cleanUrl, pathAndQuery, stripWww } from './url.js';
 const BAD_STATUSES = new Set([404, 410, 500, 501, 502, 504]);
 const REDIRECT_RELATED_STOPS = new Set(['offsite', 'bad_redirect', 'loop', 'max_hops', 'location_too_long']);
 const SEVERITY_ORDER = { P0: 0, P1: 1, P2: 2, P3: 3, INFO: 4 };
+const HREFLANG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{4})?(?:-(?:[a-z]{2}|\d{3}))?$/u;
+const LANGUAGE_LINK_TEXT = new Set([
+  'en', 'english', '日本語', '简体', '簡體', '简体中文', '繁體', '繁體中文', '中文', '한국어',
+  'tiếng việt', 'ภาษาไทย', 'bahasa indonesia', 'español', 'deutsch', 'français', 'русский', 'العربية',
+  '日文', '英文', '韓文', '越南文', '泰文',
+]);
+const LANGUAGE_PATH_SEGMENTS = new Set([
+  'en', 'en-us', 'en-gb', 'jp', 'ja', 'cn', 'zh-cn', 'zh-hans', 'zh-hant', 'zh-tw', 'zh-hk',
+  'kr', 'ko', 'th', 'vi', 'de', 'fr', 'es', 'ru', 'id', 'ms',
+]);
+const IMAGE_ONLY_EXCLUSION = /gallery|portfolio|album|photos?|works|作品|相簿|實績|型錄|圖庫|案例|照片|花絮/iu;
 const BLOCKED_BY_SITE_COPY = '這個網站的伺服器拒絕了本工具讀取（HTTP 401／403 或人機驗證）。很多網站只允許 Google 等知名爬蟲與一般瀏覽器，這不代表 Google 也被擋。本工具不會偽裝身分繞過，所以這次無法檢查；需要完整健檢，歡迎透過 LINE 官方帳號聯絡我們。';
 const GENERIC = Object.freeze({
   T01: ['首頁無法正常讀取', '首頁回應錯誤或陷入轉址循環。'],
@@ -36,6 +47,9 @@ const GENERIC = Object.freeze({
   T37: ['sitemap 無法驗證', 'sitemap 未能可靠讀取或解析。'],
   T38: ['canonical 網址無效', '頁面有 canonical 標籤，但網址無法解析。'],
   T39: ['robots.txt 內容被截斷', 'robots.txt 超過 500 KiB；Google 也只讀前 500 KiB。'],
+  T40: ['hreflang 標記有誤', '頁面的 hreflang 使用了無效的語言／地區代碼、無效網址，或指向不存在的頁面。'],
+  T41: ['hreflang 沒有列出頁面自己', '依 Google 文件，每個語言版本都要列出自己與所有其他版本，否則整組標記可能被忽略。'],
+  T42: ['網站似乎有多語言版本，但沒有 hreflang', '首頁有語系切換連結，卻沒有 hreflang 標記。hreflang 可以幫 Google 在不同語言或地區的搜尋結果中選對版本；單一語言的網站不需要。'],
   C01: ['頁面缺少標題', '可收錄頁面沒有 title。'],
   C02: ['多個頁面使用相同標題', '不同 canonical 的頁面使用相同 title。'],
   C03: ['頁面標題過於籠統', '頁面使用常見預設標題。'],
@@ -45,7 +59,8 @@ const GENERIC = Object.freeze({
   C09: ['圖片缺少替代文字', '部分圖片沒有 alt 屬性。'],
   C10: ['Open Graph 資訊不完整', '頁面缺少 og:title 或 og:image。'],
   C11: ['JSON-LD 語法無法解析', '頁面包含無法解析的 JSON-LD。'],
-  C12: ['使用了 FAQ 結構化資料', 'Google 自 2026-05-07 起不再顯示 FAQ 複合式搜尋結果（問答展開），2026 年 6 月移除相關文件。標記可以保留，但不會再有展開效果；問答內容本身對讀者仍有幫助。'],
+  C12: ['使用了 FAQ 結構化資料', 'Google 自 2023 年 8 月起只對少數政府與健康類網站顯示 FAQ 複合式搜尋結果，並於 2026-05-07 全面停止顯示，2026 年 6 月移除相關文件。標記可以保留，但不會再有展開效果；問答內容本身對讀者仍有幫助。'],
+  C14: ['頁面的主要內容可能只有圖片', '這些頁面主要區域的原始 HTML 文字不到 120 字，卻有 3 張以上圖片。人看得到圖片裡的文字，搜尋引擎與 AI 爬蟲讀不到；請確認產品名稱、規格與說明有用文字寫在頁面上。'],
   G04: ['robots.txt 封鎖了使用者即時讀取爬蟲', 'robots.txt 對 {tokens} 宣告封鎖。這類爬蟲是在使用者要求時即時讀取網頁，官方表示不一定遵守 robots.txt，實際效果無法判斷。'],
   G10: ['Bing 摘要或快取受到限制', '頁面要求 Bing 不提供摘要或快取。'],
   G11: ['Googlebot 只被部分路徑封鎖', '首頁規則允許 Googlebot，但部分已檢查頁面被封鎖。'],
@@ -54,13 +69,13 @@ const GENERIC = Object.freeze({
 const SOURCES = Object.freeze({
   T01:['google-http-errors'],T02:['google-robots'],T03:['google-robots'],T04:['google-noindex'],T05:['google-noindex'],T06:['google-noindex'],T07:['google-noindex'],
   T08:['google-starter'],T09:['google-starter'],T11:['google-http-errors'],T12:['google-http-errors'],T13:['google-http-errors'],T14:['google-starter'],
-  T15:['google-canonical'],T16:['google-canonical'],T17:['google-canonical'],T18:['google-sitemaps'],T19:['google-sitemaps'],T20:['google-sitemaps'],T21:['google-sitemaps'],T22:['google-robots'],T23:['google-mobile'],T24:['google-starter'],T28:['google-starter'],T29:['google-starter'],T30:['google-canonical'],T31:['google-canonical'],T33:['google-starter'],T34:['google-starter'],T35:['google-noindex'],T36:['google-title'],T37:['google-sitemaps'],T38:['google-canonical'],T39:['google-robots'],
-  C01:['google-title'],C02:['google-title'],C03:['google-title'],C04:['google-snippet'],C05:['google-snippet'],C06:['google-starter'],C09:['google-starter'],C10:['google-starter'],C11:['google-sd-policies'],C12:['google-sd-policies','google-updates'],
-  G01:['openai-bots','anthropic-bots','perplexity-bots','apple-bots'],G02:['bing-chat-controls'],G03:['openai-bots','anthropic-bots','google-crawlers','apple-bots','ccbot'],G04:['openai-bots','anthropic-bots','perplexity-bots'],G05:['google-snippet','google-ai-features'],G06:['google-js-seo'],G07:['google-sd-policies'],G10:['bing-chat-controls'],G11:['google-robots'],
+  T15:['google-canonical'],T16:['google-canonical'],T17:['google-canonical'],T18:['google-sitemaps'],T19:['google-sitemaps'],T20:['google-sitemaps'],T21:['google-sitemaps'],T22:['google-robots'],T23:['google-mobile'],T24:['google-starter'],T28:['google-starter'],T29:['google-starter'],T30:['google-canonical'],T31:['google-canonical'],T33:['google-starter'],T34:['google-starter'],T35:['google-noindex'],T36:['google-title'],T37:['google-sitemaps'],T38:['google-canonical'],T39:['google-robots'],T40:['google-hreflang'],T41:['google-hreflang'],T42:['google-hreflang'],
+  C01:['google-title'],C02:['google-title'],C03:['google-title'],C04:['google-snippet'],C05:['google-snippet'],C06:['google-starter'],C09:['google-starter'],C10:['google-starter'],C11:['google-sd-policies'],C12:['google-sd-policies','google-updates'],C14:['google-starter','google-helpful'],
+  G01:['openai-bots','anthropic-bots','perplexity-bots','apple-bots'],G02:['bing-chat-controls'],G03:['openai-bots','anthropic-bots','google-crawlers','apple-bots','ccbot'],G04:['openai-bots','anthropic-bots','perplexity-bots'],G05:['google-snippet','google-ai-features'],G06:['google-js-seo'],G07:['google-sd-policies'],G10:['bing-chat-controls'],G11:['google-robots'],G12:['content-signals'],
 });
 
 const FIXED = Object.freeze({
-  T02: ['robots.txt 讀取時伺服器出錯', status => `讀取 robots.txt 時伺服器回應 ${status}。若 Google 也收到相同回應，依 Google 文件，前 12 小時 Google 會暫停爬取整個網站，之後才改用先前的快取版本。`],
+  T02: ['robots.txt 讀取時伺服器出錯', status => `本工具讀取 robots.txt 時伺服器回應 ${status}。這可能是伺服器出錯，也可能是對不知名爬蟲的流量限制。若 Google 也收到相同回應，依 Google 文件，前 12 小時 Google 會暫停爬取整個網站，之後才改用先前的快取版本；請網站管理者查看伺服器紀錄，確認 Googlebot 收到的回應。`],
   T03: ['Google 被 robots.txt 擋在門外', 'robots.txt 禁止 Googlebot 抓取首頁，Google 讀不到首頁內容。網址仍可能出現在搜尋結果，但不會有正常的標題與摘要，也不符合被 AI 摘要（AI Overviews）引用的條件（頁面必須能顯示摘要）。'],
   T04: ['首頁設定了 noindex（禁止收錄）', '首頁要求搜尋引擎不要收錄。Google 重新抓取並處理後，首頁通常會從搜尋結果移除。'],
   T11: ['隨機網址也回應 200', '本工具請求一個隨機產生、應該不存在的網址，伺服器回應 200（成功）。如果這個網址確實不存在，伺服器應該回應 404 或 410，否則搜尋引擎可能把錯誤頁當成一般網頁。'],
@@ -68,7 +83,7 @@ const FIXED = Object.freeze({
   T22: ['沒有 robots.txt', '沒有 robots.txt 等於允許所有爬蟲讀取，這不是錯誤。'],
   G01: ['robots.txt 封鎖了 AI 搜尋的爬蟲', tokens => `robots.txt 對 ${tokens} 宣告封鎖。這些爬蟲負責 AI 搜尋的索引，如果它們遵守這個規則，網站就比較難出現在對應的 AI 搜尋答案中。如果是刻意的選擇，可以忽略這一項。`],
   G02: ['robots.txt 封鎖了 Bingbot', 'robots.txt 對 Bingbot 宣告封鎖。如果 Bingbot 遵守這個規則，網站就比較難出現在 Bing 搜尋，以及使用 Bing 資料的 Microsoft Copilot 答案中。如果是刻意的選擇，可以忽略這一項。'],
-  G03: ['robots.txt 封鎖了 AI 訓練用的爬蟲', tokens => `robots.txt 對 ${tokens} 宣告封鎖。這些控制的是 AI 模型訓練，不會封鎖另外列出的搜尋用爬蟲（例如 Googlebot、OAI-SearchBot）；其他後續用途本工具無法判斷。這是經營者的選擇，不算問題。`],
+  G03: ['robots.txt 封鎖了 AI 訓練用的爬蟲', tokens => `robots.txt 對 ${tokens} 宣告封鎖。這些控制的是 AI 模型訓練，不會封鎖另外列出的搜尋用爬蟲（例如 Googlebot、OAI-SearchBot）；其他後續用途本工具無法判斷。封鎖後，這些模型的內建知識可能較少提到貴公司；要不要開放是經營上的決定，不算問題。`],
   G05: ['頁面禁止顯示摘要（nosnippet）', '設定 nosnippet 或 max-snippet:0 的頁面不能在搜尋結果顯示摘要；依 Google 說明，頁面必須能顯示摘要才符合出現在 AI 摘要與 AI 模式的條件。如果希望出現在 Google 的 AI 功能，才需要調整。'],
   G06: ['主要內容可能要執行 JavaScript 才看得到', '原始 HTML 裡幾乎沒有文字。Google 會嘗試執行 JavaScript，但有條件也可能延遲；其他 AI 爬蟲是否執行 JavaScript 沒有官方保證。把主要內容放在原始 HTML 裡最保險。'],
   G07: ['缺少組織結構化資料', 'Organization／LocalBusiness 標記可以幫搜尋引擎確認品牌名稱、網址、標誌與聯絡方式。Google 表示 AI 搜尋不需要特殊標記，所以這是建議，不是必要條件；只能填寫真實資訊。本項不計分。'],
@@ -98,6 +113,34 @@ function robotsBlocks(snapshot, token, url) {
   const robots = snapshot?.robots;
   return robots?.policy === 'parse' && !robots.parsed?.overflow && robots.parsed
     ? !isAllowed(robots.parsed, token, pathAndQuery(url)) : false;
+}
+
+function contentSignalLabel(signal) {
+  const parts = [];
+  if (signal?.search != null) parts.push(`search=${signal.search}`);
+  if (signal?.aiInput != null) parts.push(`ai-input=${signal.aiInput}`);
+  if (signal?.aiTrain != null) parts.push(`ai-train=${signal.aiTrain}`);
+  return `${parts.join(', ')}（適用 ${(signal?.agents || []).join(', ')}）`;
+}
+
+function hasLanguageSwitchLink(link) {
+  if (LANGUAGE_LINK_TEXT.has(normText(link?.text || '').toLowerCase())) return true;
+  try {
+    const segment = new URL(link.url).pathname.split('/').filter(Boolean)[0] || '';
+    return LANGUAGE_PATH_SEGMENTS.has(segment.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function imageOnlyExcluded(entry) {
+  let pathname = '';
+  try {
+    pathname = new URL(pageUrl(entry)).pathname;
+    try { pathname = decodeURIComponent(pathname); } catch { /* use the original pathname */ }
+  } catch { /* invalid page URLs are handled elsewhere */ }
+  return [pathname, entry?.page?.title, entry?.page?.h1]
+    .some((value) => IMAGE_ONLY_EXCLUSION.test(String(value ?? '')));
 }
 
 export function headerDirectives(value, ua = 'googlebot') {
@@ -194,7 +237,7 @@ export function runChecks(snapshot) {
 
   if (home && ((!home.accessBlocked && BAD_STATUSES.has(home.status)) || ['loop','max_hops'].includes(home.stop))) add('T01','home_unreachable','tech','P0','verified',[pageUrl(home)]);
   const badRobots = [snapshot?.robots, snapshot?.robotsInitial].filter(r => r && !r.error && !r.accessBlocked && (r.status === 429 || (r.status >= 500 && r.status <= 599)));
-  if (badRobots.length) add('T02','robots_server_error','tech','P0','verified',badRobots.map(r=>r.url),{ status:badRobots[0].status },1);
+  if (badRobots.length) add('T02','robots_server_error','tech','P1','inferred',badRobots.map(r=>r.url),{ status:badRobots[0].status },1);
   const robots = snapshot?.robots;
   if (robots?.policy === 'parse' && robots.parsed && !robots.parsed.overflow && homeUrl && !isAllowed(robots.parsed,'googlebot',pathAndQuery(homeUrl))) {
     add('T03','googlebot_blocked_home','tech','P0','verified',[homeUrl],{},1,FIXED.T03,'刪除或修改 robots.txt 裡對 Googlebot 或 *（所有爬蟲）的 Disallow: / 規則。常見原因是網站開發期間的設定，上線後忘了移除。');
@@ -217,6 +260,15 @@ export function runChecks(snapshot) {
   addBot('G02','bingbot_blocked','P1',bing);
   addBot('G03','training_blocked','INFO',blockedByCategory('training'));
   addBot('G04','user_fetch_blocked','INFO',blockedByCategory('user_fetch'));
+  const contentSignals = robots?.policy === 'parse' && Array.isArray(robots.parsed?.contentSignals)
+    ? robots.parsed.contentSignals : [];
+  if (contentSignals.length) {
+    const list = contentSignals.map(contentSignalLabel).join('、');
+    add('G12','content_signal','geo','INFO','verified',[robots.url],{signals:contentSignals},contentSignals.length,[
+      'robots.txt 宣告了 Content Signals',
+      `robots.txt 以 Content-Signal 宣告：${list}。這是 Cloudflare 推動的偏好宣告（search＝搜尋索引、ai-input＝AI 即時引用、ai-train＝AI 訓練），不是技術上的封鎖；各家爬蟲是否遵守由其自行決定。本項不計分。`,
+    ]);
+  }
 
   if (!snapshot?.homeAnalyzable) return findings.sort((a,b)=>SEVERITY_ORDER[a.severity]-SEVERITY_ORDER[b.severity] || a.id.localeCompare(b.id));
 
@@ -277,7 +329,26 @@ export function runChecks(snapshot) {
   const nofollow=indexablePages.filter(p=>directivesForEntry(p).includes('nofollow')); if(nofollow.length)add('T35','page_nofollow','tech','P3',nofollow.some(p=>reliesOnTruncatedHeader(p,'googlebot',d=>d==='nofollow'))?'inferred':'verified',nofollow.map(pageUrl));
   const multiTitle=analyzablePages.filter(p=>p.page.titleCount>=2); if(multiTitle.length)add('T36','multiple_title','tech','P3','verified',multiTitle.map(pageUrl));
   const invalidCanon=indexablePages.filter(p=>p.page.canonicalTagCount>0&&!(p.page.canonicals?.length)); if(invalidCanon.length)add('T38','canonical_invalid','tech','P2','verified',invalidCanon.map(pageUrl));
+  const invalidHreflang=indexablePages.filter((p)=>(p.page.hreflangs||[]).some((item)=>{
+    const lang=String(item.lang||'').toLowerCase();
+    return item.href==null||(lang!=='x-default'&&!HREFLANG_PATTERN.test(lang))||lookupTarget(item.href)?.issue==='not_found';
+  }));
+  if(invalidHreflang.length)add('T40','hreflang_invalid','tech','P3','verified',invalidHreflang.map(pageUrl));
+  const hreflangWithoutSelf=indexablePages.filter((p)=>{
+    const hreflangs=p.page.hreflangs||[];
+    if(!hreflangs.length||hreflangs.some((item)=>item.href==null))return false;
+    const selfUrls=unique([
+      cleanUrl(p.finalUrl||p.url),
+      p.page.canonicals?.length===1?cleanUrl(p.page.canonicals[0]):null,
+    ]);
+    return !hreflangs.some((item)=>selfUrls.includes(cleanUrl(item.href)));
+  });
+  if(hreflangWithoutSelf.length)add('T41','hreflang_no_self','tech','P3','verified',hreflangWithoutSelf.map(pageUrl));
+  if(home&&isIndexable(home)&&!(home.page.hreflangs||[]).length&&(home.page.links||[]).some(hasLanguageSwitchLink)) {
+    add('T42','hreflang_missing','tech','P3','inferred',[pageUrl(home)],{},1);
+  }
 
+  const shells=analyzablePages.filter(p=>p.page.textLength<200&&p.page.scriptSrcCount>=1&&p.page.hasSpaRoot&&p.page.spaRootTextLength<20);
   const missingTitle=indexablePages.filter(p=>!p.page.title); if(missingTitle.length)add('C01','title_missing','content','P1','verified',missingTitle.map(pageUrl));
   const duplicates = (field) => { const groups=new Map(); for(const p of indexablePages){const v=normText(p.page[field]||'');if(!v)continue;const list=groups.get(v)||[];list.push(p);groups.set(v,list);} return [...groups.entries()].filter(([,ps])=>new Set(ps.map(canonicalKey)).size>=2); };
   const titleGroups=duplicates('title'); if(titleGroups.length){const urls=unique(titleGroups.flatMap(([,ps])=>ps.map(pageUrl)));add('C02','title_duplicate','content','P2','verified',urls,{groups:titleGroups.map(([value,ps])=>({value,urls:ps.map(pageUrl)}))},urls.length);}
@@ -290,10 +361,12 @@ export function runChecks(snapshot) {
   const og=indexablePages.filter(p=>!p.page.og?.title||!p.page.og?.image); if(og.length)add('C10','og_missing','content','INFO','verified',og.map(pageUrl));
   const badJson= indexablePages.filter(p=>p.page.jsonld?.some(j=>!j.ok)); if(badJson.length)add('C11','jsonld_invalid','content','P3','verified',badJson.map(pageUrl));
   const faq=indexablePages.filter(p=>p.page.jsonld?.some(j=>j.types?.some(t=>String(t).toLowerCase()==='faqpage'))); if(faq.length)add('C12','faq_schema','content','INFO','verified',faq.map(pageUrl));
+  const imageOnly=indexablePages.filter(p=>!shells.includes(p)&&p.page.mainImageCount>=3&&p.page.mainTextLength<120&&p.page.mainAltChars<50&&!p.page.mainHasMedia&&!imageOnlyExcluded(p));
+  if(imageOnly.length)add('C14','image_only_content','content','P3','inferred',imageOnly.map(pageUrl),{},null,null,'把圖片裡的重點（品名、規格、價格、服務說明）改成網頁文字；圖片保留並補上說明文字（alt）。');
 
   const snippetDirective=d=>d==='nosnippet'||d.replace(/\s/g,'')==='max-snippet:0';
   const nosnip=indexablePages.filter(p=>directivesForEntry(p).some(snippetDirective)); if(nosnip.length)add('G05','nosnippet','geo','P2',nosnip.some(p=>reliesOnTruncatedHeader(p,'googlebot',snippetDirective))?'inferred':'verified',nosnip.map(pageUrl),{},null,FIXED.G05);
-  const shells=analyzablePages.filter(p=>p.page.textLength<200&&p.page.scriptSrcCount>=1&&p.page.hasSpaRoot&&p.page.spaRootTextLength<20); if(shells.length)add('G06','js_shell','geo','P3','inferred',shells.map(pageUrl),{},null,FIXED.G06);
+  if(shells.length)add('G06','js_shell','geo','P3','inferred',shells.map(pageUrl),{},null,FIXED.G06);
   const orgTypes=new Set([
     'organization','corporation','localbusiness','onlinestore','onlinebusiness','store','restaurant',
     'professionalservice','medicalorganization','educationalorganization','ngo','governmentorganization',

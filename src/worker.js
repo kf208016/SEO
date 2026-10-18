@@ -220,7 +220,13 @@ async function handle(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
   if (url.pathname === '/api/config' && request.method === 'GET') {
-    return json({ turnstileSiteKey: env.TURNSTILE_SITEKEY ?? '', contactUrl: env.CONTACT_URL ?? '', maxPages: 15, version: VERSION });
+    return json({
+      turnstileSiteKey: env.TURNSTILE_SITEKEY ?? '',
+      contactUrl: env.CONTACT_URL ?? '',
+      lineId: env.LINE_ID ?? '',
+      maxPages: 15,
+      version: VERSION,
+    });
   }
   if (url.pathname !== '/api/start' && url.pathname !== '/api/fetch') return fail('not_found', 404);
   if (misconfigured(env, url.hostname)) return fail('service_misconfigured', 503);

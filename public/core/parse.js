@@ -12,6 +12,7 @@ export const PARSE_LIMITS = Object.freeze({
 
 const UTF8 = new TextEncoder();
 const SKIP_TEXT = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS', 'OBJECT']);
+const MAIN_SKIP_TEXT = new Set(['NAV', 'HEADER', 'FOOTER', 'ASIDE']);
 const SPA_IDS = ['root', 'app', '__next', '__nuxt', 'svelte', '___gatsby'];
 const RAW_TEXT_TAGS = new Set(['script', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes']);
 
@@ -264,7 +265,7 @@ export function fnv1a(value) {
   return hash.toString(16).padStart(8, '0');
 }
 
-function visibleText(root, maxChars = Infinity) {
+function visibleText(root, maxChars = Infinity, extraSkip = null) {
   if (!root) return { text: '', overflow: false };
   const parts = [];
   const stack = [root];
@@ -276,13 +277,36 @@ function visibleText(root, maxChars = Infinity) {
       if (value) parts.push(value);
       continue;
     }
-    if (node.nodeType === 1 && SKIP_TEXT.has(String(node.tagName).toUpperCase())) continue;
+    if (node.nodeType === 1) {
+      const tagName = String(node.tagName).toUpperCase();
+      if (SKIP_TEXT.has(tagName) || extraSkip?.has(tagName)) continue;
+    }
     const children = node.childNodes || [];
     for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
   }
   const normalized = normText(parts.join(' '));
   const chars = Array.from(normalized);
   return { text: chars.slice(0, maxChars).join(''), overflow: chars.length > maxChars };
+}
+
+function isInsideSkippedMainSection(node, root) {
+  for (let current = node?.parentNode; current && current !== root; current = current.parentNode) {
+    if (current.nodeType === 1 && MAIN_SKIP_TEXT.has(String(current.tagName).toUpperCase())) return true;
+  }
+  return false;
+}
+
+function isSmallImage(node) {
+  const width = attribute(node, 'width');
+  const height = attribute(node, 'height');
+  if (width == null || height == null) return false;
+  const widthText = String(width).trim();
+  const heightText = String(height).trim();
+  if (!widthText || !heightText) return false;
+  const widthNumber = Number(widthText);
+  const heightNumber = Number(heightText);
+  return Number.isFinite(widthNumber) && Number.isFinite(heightNumber)
+    && widthNumber <= 50 && heightNumber <= 50;
 }
 
 function directiveList(nodes) {
@@ -381,6 +405,18 @@ export function extractPage(doc, pageUrl) {
     }
   }
 
+  const hreflangs = [];
+  for (const node of doc.querySelectorAll('link, LINK')) {
+    const rels = String(attribute(node, 'rel') || '').split(/\s+/u);
+    if (!rels.some((part) => part.toLowerCase() === 'alternate') || !hasAttributeCI(node, 'hreflang')) continue;
+    if (hreflangs.length >= 200) break;
+    const rawHref = attribute(node, 'href');
+    hreflangs.push({
+      lang: String(attribute(node, 'hreflang') ?? '').trim(),
+      href: rawHref == null ? null : cleanUrl(rawHref, baseUrl),
+    });
+  }
+
   const jsonld = [];
   const jsonNodes = Array.from(doc.querySelectorAll('script, SCRIPT')).filter((node) =>
     String(attribute(node, 'type') || '').trim().toLowerCase() === 'application/ld+json');
@@ -443,6 +479,30 @@ export function extractPage(doc, pageUrl) {
 
   const textResult = visibleText(doc.body || doc.documentElement || doc, PARSE_LIMITS.textChars);
   if (textResult.overflow) limitsHit.add('textChars');
+  const headings = [];
+  for (const node of doc.querySelectorAll('h1, H1, h2, H2, h3, H3')) {
+    const text = normText(node.textContent || '');
+    if (!text) continue;
+    headings.push({
+      level: Number(String(node.tagName).slice(1)),
+      text: Array.from(text).slice(0, 200).join(''),
+    });
+    if (headings.length >= 30) break;
+  }
+
+  const mainRoot = doc.querySelector('main, MAIN') || doc.body || doc.documentElement || doc;
+  const mainTextResult = visibleText(mainRoot, PARSE_LIMITS.textChars, MAIN_SKIP_TEXT);
+  if (mainTextResult.overflow) limitsHit.add('textChars');
+  const mainImages = [];
+  for (const node of mainRoot.querySelectorAll?.('img, IMG') || []) {
+    if (isInsideSkippedMainSection(node, mainRoot) || isSmallImage(node)) continue;
+    if (mainImages.length >= PARSE_LIMITS.images) {
+      limitsHit.add('images');
+      break;
+    }
+    mainImages.push(node);
+  }
+  const mainMedia = (mainRoot.querySelectorAll?.('video, VIDEO, canvas, CANVAS, iframe, IFRAME, object, OBJECT, embed, EMBED')?.length || 0) > 0;
   let spaRoot = null;
   for (const id of SPA_IDS) {
     spaRoot = doc.getElementById(id);
@@ -473,7 +533,9 @@ export function extractPage(doc, pageUrl) {
     metaBingbot,
     canonicals,
     canonicalTagCount: canonicalNodes.length,
+    hreflangs,
     h1: nonempty(doc.querySelector('h1, H1')?.textContent),
+    headings,
     lang: nonempty(attribute(doc.documentElement, 'lang')),
     hasViewport: metaElements(doc, 'name', ['viewport']).length > 0,
     og: {
@@ -488,6 +550,11 @@ export function extractPage(doc, pageUrl) {
     insecureResources,
     textLength: Array.from(textResult.text).length,
     textHash: fnv1a(textResult.text),
+    textPreview: Array.from(textResult.text).slice(0, 300).join(''),
+    mainTextLength: Array.from(mainTextResult.text).length,
+    mainImageCount: mainImages.length,
+    mainAltChars: mainImages.reduce((sum, node) => sum + Array.from(normText(attribute(node, 'alt') ?? '')).length, 0),
+    mainHasMedia: mainMedia,
     scriptCount: scripts.length,
     scriptSrcCount: scripts.filter((node) => hasAttributeCI(node, 'src')).length,
     hasSpaRoot: Boolean(spaRoot),

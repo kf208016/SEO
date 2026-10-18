@@ -142,6 +142,12 @@ const EXPECTED_SOURCES = {
   'apple-bots': ['Apple：關於 Applebot', 'https://support.apple.com/en-us/119829'],
   ccbot: ['Common Crawl：CCBot', 'https://commoncrawl.org/ccbot'],
   'bing-chat-controls': ['Bing：網站管理員控制 Bing Chat 使用內容的選項', 'https://blogs.bing.com/webmaster/september-2023/Announcing-new-options-for-webmasters-to-control-usage-of-their-content-in-Bing-Chat'],
+  // v1.9 (SPEC-002 §1.3)
+  'cloudflare-ai-default': ['Cloudflare：新網域預設封鎖 AI 爬蟲（2025-07）', 'https://blog.cloudflare.com/content-independence-day-no-ai-crawl-without-compensation/'],
+  'content-signals': ['Content Signals Policy', 'https://contentsignals.org/'],
+  'cloudflare-robots': ['Cloudflare：代管 robots.txt', 'https://developers.cloudflare.com/bots/additional-configurations/managed-robots-txt/'],
+  'google-hreflang': ['Google：告訴 Google 網頁的本地化版本', 'https://developers.google.com/search/docs/specialty/international/localized-versions'],
+  'line-url-scheme': ['LINE：LINE URL scheme', 'https://developers.line.biz/en/docs/messaging-api/using-line-url-scheme/'],
 };
 
 test('SOURCES: every id with exact title and url', () => {
@@ -153,8 +159,8 @@ test('SOURCES: every id with exact title and url', () => {
   for (const b of BOTS) assert.ok(SOURCES[b.source], 'BOTS source exists: ' + b.source);
 });
 
-test('VERSION is 1.8.0', () => {
-  assert.equal(VERSION, '1.8.0');
+test('VERSION is 1.9.0', () => {
+  assert.equal(VERSION, '1.9.0'); // v1.9 (SPEC-002 header)
 });
 
 // ------------------------------------------------------------------ url.js

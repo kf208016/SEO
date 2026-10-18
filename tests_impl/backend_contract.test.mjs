@@ -452,7 +452,7 @@ test('W04 回應封鎖判斷、請求標頭與 512 字元標頭上限精確', as
     assert.equal(options.method, 'GET');
     assert.equal(options.redirect, 'manual');
     assert.deepEqual(Object.keys(options.headers).sort(), ['Accept', 'Accept-Language', 'User-Agent'].sort());
-    assert.equal(options.headers['User-Agent'], 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://goldwatersmartlink.com.tw/)');
+    assert.equal(options.headers['User-Agent'], 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://seo-geo-check.fanyuchieh.workers.dev/bot.html)');
     assert.equal(options.headers.Cookie, undefined);
     assert.equal(options.headers.Authorization, undefined);
   }

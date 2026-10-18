@@ -16,10 +16,11 @@ const output = document.querySelector('#report-output');
 const actions = document.querySelector('#report-actions');
 const privacyContact = document.querySelector('#privacy-contact');
 
-let config = { maxPages: 15, contactUrl: null, turnstileSiteKey: null };
+let config = { maxPages: 15, contactUrl: null, lineId: '', turnstileSiteKey: null };
 let widgetId = null;
 let current = null;
 let detail = false;
+const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 const ERROR_MESSAGES = Object.freeze({
   invalid_url:'網址格式不正確，或該網址不能由本服務檢查。',rate_limited:'請求太頻繁，請稍後再試。',daily_cap:'今天的免費檢查額度已用完，請改天再試。',host_busy:'這個網站目前有其他檢查正在進行，請稍後再試。',turnstile_failed:'人機驗證失敗，請重新驗證。',service_paused:'健檢服務目前暫停。',service_misconfigured:'健檢服務尚未完成設定。',bad_origin:'請從本站頁面啟動健檢。',internal:'服務暫時發生錯誤，請稍後再試。'
@@ -30,7 +31,7 @@ function apiError(code) { return ERROR_MESSAGES[code] || '無法開始檢查，�
 function resetTurnstile() { if (widgetId !== null && window.turnstile) window.turnstile.reset(widgetId); }
 function renderCurrent() {
   if (!current) return;
-  output.innerHTML = renderReport(current.snapshot,current.findings,current.score,current.bots,{detail,contactUrl:config.contactUrl});
+  output.innerHTML = renderReport(current.snapshot,current.findings,current.score,current.bots,{detail,contactUrl:config.contactUrl,lineId:config.lineId,mobile});
   document.querySelector('#toggle-detail').textContent = detail ? '切換簡易報告' : '切換完整報告';
 }
 function fallbackResult(url,error) {
@@ -105,6 +106,22 @@ document.querySelector('#download-json').addEventListener('click',()=>{
   if (!current) return;
   const blob=new Blob([JSON.stringify({snapshot:current.snapshot,findings:current.findings,score:current.score,bots:current.bots},null,2)],{type:'application/json'});
   const href=URL.createObjectURL(blob);const a=document.createElement('a');const date=new Date();const stamp=`${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}-${String(date.getHours()).padStart(2,'0')}${String(date.getMinutes()).padStart(2,'0')}`;a.href=href;a.download=`seo-check_${String(current.snapshot.siteHost||'site').replace(/[^a-z0-9.-]/gi,'_')}_${stamp}.json`;a.click();URL.revokeObjectURL(href);
+});
+
+output.addEventListener('click',async event=>{
+  const button=event.target?.closest?.('[data-copy="summary"]');
+  if (!button || !output.contains(button)) return;
+  const summary=output.querySelector('.line-summary')?.textContent;
+  if (summary===undefined) return;
+  const original=button.textContent;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
+    await navigator.clipboard.writeText(summary);
+    button.textContent='已複製';
+    setTimeout(()=>{if(button.isConnected)button.textContent=original;},2000);
+  } catch {
+    button.textContent='無法複製，請手動選取文字';
+  }
 });
 
 initialize();

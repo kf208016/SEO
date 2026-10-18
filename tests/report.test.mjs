@@ -113,13 +113,13 @@ test('Score block: valid / sample_only / unavailable wording and light text', as
   assert.equal(a.r.score.scoreStatus, 'valid');
   assert.ok(!a.text.includes('樣本分數'));
   assert.ok(!a.text.includes('無法評分'));
-  assert.ok(a.text.includes('分數'));
+  assert.ok(a.text.includes('技術健康分數')); // v1.9 (SPEC-002 §3.1): the card title
   assert.ok(a.text.includes(C.LIGHTS.green));
 
   const b = await report('s13', { detail: false });
   assert.equal(b.r.score.scoreStatus, 'sample_only');
-  assert.ok(b.text.includes('樣本分數'));
-  assert.ok(b.text.includes('本次只檢查部分頁面'));
+  assert.ok(b.text.includes('技術健康分數'));
+  assert.ok(b.text.includes('樣本分數：本次只檢查部分頁面')); // v1.9 wording
 
   const c = await report('s02', { detail: false });
   assert.equal(c.r.score.scoreStatus, 'unavailable');

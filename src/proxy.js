@@ -6,7 +6,7 @@ export const BODY_LIMITS = { page: 2_000_000, robots: 512_000, sitemap: 2_000_00
 export const MAX_URL_BYTES = 2048;
 
 const REQUEST_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://goldwatersmartlink.com.tw/)',
+  'User-Agent': 'Mozilla/5.0 (compatible; KinsuiSEOCheck/1.0; +https://seo-geo-check.fanyuchieh.workers.dev/bot.html)',
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
   'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.5',
 };

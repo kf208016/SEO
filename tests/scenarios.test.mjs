@@ -23,7 +23,7 @@ async function go(builder) {
 // ------------------------------------------------------------------ finding table (§6.1) and sources (§9)
 const TABLE = {
   T01: ['home_unreachable', 'tech', ['P0'], 'verified'],
-  T02: ['robots_server_error', 'tech', ['P0'], 'verified'],
+  T02: ['robots_server_error', 'tech', ['P1'], 'inferred'], // v1.9 (SPEC-002 §5.1)
   T03: ['googlebot_blocked_home', 'tech', ['P0'], 'verified'],
   T04: ['home_noindex', 'tech', ['P0'], 'verified'],
   T05: ['many_noindex', 'tech', ['P2'], 'inferred'],
@@ -244,13 +244,14 @@ test('S06 messy site -> C01 C02 C11 C12 T15 T16(home P1) C09 G05 T34 T36 T33 T38
 test('S07 robots 503 -> T02; home not fetched; coverage failed', async () => {
   const r = await go(S.s07);
   assert.ok(has(r, 'T02'));
-  assert.equal(r.byId.T02.severity, 'P0');
-  assert.equal(r.byId.T02.evidence, 'verified');
+  // v1.9 (SPEC-002 §5.1): T02 is P1 / inferred, so an unavailable audit without P0 is gray
+  assert.equal(r.byId.T02.severity, 'P1');
+  assert.equal(r.byId.T02.evidence, 'inferred');
   assert.equal(r.byId.T02.count, 1);
   assert.ok(!r.site.requested('https://a.com/', 'page'));
   assert.deepEqual(kinds(r.site), ['robots']);
   assert.equal(r.snapshot.coverage.status, 'failed');
-  assert.equal(r.score.grade, 'red');
+  assert.equal(r.score.grade, 'gray');
 });
 
 test('S08 http version 200 -> T09; random URL 200 -> T11', async () => {

@@ -16,7 +16,7 @@ import {
   rulesFor,
 } from './robots.js';
 import { OUR_TOKEN } from './bots.js';
-import { decodeBody, extractPage, stripInlineStyles } from './parse.js';
+import { decodeBody, extractPage, normText, stripInlineStyles } from './parse.js';
 import { looksLikeHtml, parseSitemap } from './sitemap.js';
 
 export const SKIP_EXTENSIONS = Object.freeze([
@@ -26,6 +26,90 @@ export const SKIP_EXTENSIONS = Object.freeze([
 ]);
 
 export const CRAWL_LIMITS = Object.freeze({ discovered: 5000, inlinksPerUrl: 50, maxHops: 5 });
+export const BUCKET_QUOTAS = Object.freeze({ product: 6, content: 5, trust: 3 });
+
+const EXCLUDED_SEGMENTS = new Set([
+  'cart', 'checkout', 'login', 'signin', 'sign-in', 'register', 'signup', 'sign-up',
+  'account', 'member', 'members', 'privacy', 'terms', 'policy', 'wp-login.php',
+  'wp-admin', 'feed', 'search', 'tag', 'tags', 'author',
+]);
+const PRODUCT_SEGMENTS = new Set([
+  'product', 'products', 'item', 'items', 'service', 'services', 'shop', 'store',
+  'course', 'courses', 'solution', 'solutions', 'case', 'cases', 'project', 'projects',
+  'portfolio', 'menu', 'goods', 'detail', 'p', 'pd', 'prod',
+]);
+const CONTENT_SEGMENTS = new Set([
+  'blog', 'blogs', 'news', 'article', 'articles', 'post', 'posts', 'category',
+  'categories', 'collection', 'collections', 'faq', 'knowledge', 'tips', 'column',
+  'columns', 'press', 'event', 'events', 'activity', 'activities', 'topic', 'topics',
+]);
+const TRUST_SEGMENTS = new Set([
+  'about', 'about-us', 'contact', 'contact-us', 'company', 'team', 'stores',
+  'locations', 'location', 'branch', 'branches', 'history', 'brand', 'profile',
+  'intro', 'introduction',
+]);
+const EXCLUDED_ZH = ['購物車', '登入', '註冊', '會員', '隱私', '條款', '政策', '退換貨', '結帳', '搜尋', '網站地圖'];
+const PRODUCT_ZH = ['產品', '商品', '服務', '課程', '方案', '作品', '案例', '型錄', '系列', '品項', '菜單'];
+const CONTENT_ZH = ['最新消息', '部落格', '文章', '專欄', '常見問題', '問答', '分類', '知識', '新聞', '活動', '公告', '消息'];
+const TRUST_ZH = ['關於', '聯絡', '聯繫', '公司', '團隊', '門市', '據點', '簡介', '品牌', '沿革'];
+
+function containsAny(values, needles) {
+  return values.some((value) => needles.some((needle) => value.includes(needle)));
+}
+
+export function classifyUrl(url, anchorTexts = []) {
+  let parsed;
+  try { parsed = new URL(url, 'https://classification.invalid/'); } catch { return 'other'; }
+  let pathname = parsed.pathname;
+  try { pathname = decodeURIComponent(pathname); } catch { /* keep the original encoded path */ }
+  const segments = pathname.toLowerCase().split('/').filter(Boolean);
+  const query = parsed.search.toLowerCase();
+  const anchors = (Array.isArray(anchorTexts) ? anchorTexts : [])
+    .map((text) => normText(text).toLowerCase());
+
+  const paginatedPath = segments.some((segment, index) => segment === 'page'
+    && /^\d+$/u.test(segments[index + 1] || '') && Number(segments[index + 1]) >= 2);
+  const paginatedQuery = /[?&](?:page|p|pg)=(\d+)/u.exec(query);
+  if (segments.some((segment) => EXCLUDED_SEGMENTS.has(segment))
+    || paginatedPath
+    || (paginatedQuery && Number(paginatedQuery[1]) >= 2)
+    || /[?&](?:sort|orderby|order|filter)=/u.test(query)
+    || containsAny(anchors, EXCLUDED_ZH)) return 'excluded';
+
+  const segmentAndAnchors = [...segments, ...anchors];
+  if (segments.some((segment) => PRODUCT_SEGMENTS.has(segment))
+    || /[?&](?:id|pid|pno|prod|product|sku|item|goods)=/u.test(query)
+    || containsAny(segmentAndAnchors, PRODUCT_ZH)) return 'product';
+  if (segments.some((segment) => CONTENT_SEGMENTS.has(segment))
+    || containsAny(segmentAndAnchors, CONTENT_ZH)) return 'content';
+  if (segments.some((segment) => TRUST_SEGMENTS.has(segment))
+    || containsAny(segmentAndAnchors, TRUST_ZH)) return 'trust';
+  return 'other';
+}
+
+export function orderCandidates(items) {
+  const source = Array.isArray(items) ? items : [];
+  const classified = source.map((item, index) => ({
+    item,
+    index,
+    bucket: classifyUrl(item?.url, item?.anchorTexts),
+  }));
+  const selected = new Set();
+  const take = (bucket, limit) => classified.filter((entry) => {
+    if (entry.bucket !== bucket || selected.has(entry.index) || limit <= 0) return false;
+    selected.add(entry.index);
+    limit -= 1;
+    return true;
+  });
+  const prioritized = [
+    ...take('product', BUCKET_QUOTAS.product),
+    ...take('content', BUCKET_QUOTAS.content),
+    ...take('trust', BUCKET_QUOTAS.trust),
+  ];
+  const remainder = classified.filter((entry) => !selected.has(entry.index) && entry.bucket !== 'excluded');
+  const excluded = classified.filter((entry) => !selected.has(entry.index) && entry.bucket === 'excluded');
+  return [...prioritized, ...remainder, ...excluded].map((entry) => entry.item);
+}
 
 const FAILURE_REASONS = new Set([
   'blocked_by_site',
@@ -349,7 +433,7 @@ export async function runAudit(startUrl, {
   const pages = [];
   const finalSeen = new Map();
 
-  async function makePageEntry(requestedUrl, depth, result) {
+  async function makePageEntry(requestedUrl, depth, result, bucket) {
     let text = null;
     let isHtml = false;
     let page = null;
@@ -384,10 +468,11 @@ export async function runAudit(startUrl, {
       page,
       duplicateOf,
       depth,
+      bucket,
     };
   }
 
-  const homeEntry = await makePageEntry(homeUrl0, 0, homeResult);
+  const homeEntry = await makePageEntry(homeUrl0, 0, homeResult, 'home');
   pages.push(homeEntry);
   discover(homeUrl0, { depth: 0, enqueue: false });
   discovered[homeUrl0].crawled = true;
@@ -523,9 +608,32 @@ export async function runAudit(startUrl, {
   }
 
   const sourceForLinks = homeEntry.finalUrl || homeEntry.url;
-  if (start !== home && start !== homeUrl0) discover(start, { depth: 0 });
-  for (const link of homeEntry.page.links) discover(link.url, { referrer: sourceForLinks, depth: 1 });
+  const startIsSeparate = start !== home && start !== homeUrl0;
+  if (startIsSeparate) discover(start, { depth: 0 });
+  const homeAnchorTexts = new Map();
+  for (const link of homeEntry.page.links) {
+    const url = discover(link.url, { referrer: sourceForLinks, depth: 1 });
+    if (!url) continue;
+    if (!homeAnchorTexts.has(url)) homeAnchorTexts.set(url, []);
+    homeAnchorTexts.get(url).push(link.text || '');
+  }
   for (const url of sitemapUrls) discover(url, { fromSitemap: true, depth: 0 });
+
+  const initialItems = queue
+    .filter((item) => !discovered[item.url]?.crawled)
+    .map((item) => ({
+      ...item,
+      anchorTexts: homeAnchorTexts.get(item.url) || [],
+      fromSitemap: Boolean(discovered[item.url]?.fromSitemap),
+    }));
+  const startItemIndex = startIsSeparate ? initialItems.findIndex((item) => item.url === start) : -1;
+  const startItem = startItemIndex >= 0 ? { ...initialItems[startItemIndex], bucket: 'start' } : null;
+  const candidates = initialItems.filter((_, index) => index !== startItemIndex);
+  const ordered = orderCandidates(candidates).map((item) => ({
+    ...item,
+    bucket: classifyUrl(item.url, item.anchorTexts),
+  }));
+  queue.splice(0, queue.length, ...(startItem ? [startItem] : []), ...ordered);
 
   while (queue.length && pages.length < maxPages && !timedOut) {
     if (disabledKinds.has('page')) break;
@@ -542,7 +650,12 @@ export async function runAudit(startUrl, {
     if (!hasTime()) break;
     const result = await fetchFollow(item.url, 'page');
     discovered[item.url].crawled = true;
-    const entry = await makePageEntry(item.url, item.depth, result);
+    const entry = await makePageEntry(
+      item.url,
+      item.depth,
+      result,
+      item.bucket || classifyUrl(item.url, item.anchorTexts),
+    );
     pages.push(entry);
     if (entry.finalUrl !== item.url) {
       discover(entry.finalUrl, { depth: item.depth, enqueue: false });
@@ -625,6 +738,10 @@ function finalizeSnapshot(base, reasons, maxPages, requests, skippedByRobots, no
   for (const reason of reasons) if (!orderedReasons.includes(reason)) orderedReasons.push(reason);
   const failed = orderedReasons.some((reason) => FAILURE_REASONS.has(reason));
   const status = failed ? 'failed' : orderedReasons.length ? 'partial' : 'complete';
+  const buckets = { product: 0, content: 0, trust: 0, other: 0, excluded: 0 };
+  for (const page of base.pages || []) {
+    if (Object.hasOwn(buckets, page?.bucket)) buckets[page.bucket] += 1;
+  }
   return {
     ...base,
     coverage: {
@@ -639,6 +756,7 @@ function finalizeSnapshot(base, reasons, maxPages, requests, skippedByRobots, no
       skippedByRobots,
       notCrawled,
       timedOut: Boolean(timedOut),
+      buckets,
     },
   };
 }
